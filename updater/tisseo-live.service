@@ -30,6 +30,8 @@ User=plagnito
 # n'y touche pas. PATH complet : `npm install` doit trouver le npm de ce node.
 Environment=PATH=/usr/local/node-coffre/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PORT=3127
+# Écoute en boucle locale seulement : on n'entre que par cloudflared.
+Environment=HOST=127.0.0.1
 ExecStart=/usr/local/node-coffre/bin/node updater/supervisor.cjs
 Restart=always
 RestartSec=5
