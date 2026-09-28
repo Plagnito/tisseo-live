@@ -1,0 +1,13 @@
+{
+  "name": "Tisséo Live — Toulouse",
+  "short_name": "Tisséo Live",
+  "description": "Positions en direct des bus, tram et Téléo du réseau Tisséo à Toulouse.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#101418",
+  "theme_color": "#171d24",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

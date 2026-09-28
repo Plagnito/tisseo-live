@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#171d24">
+<meta name="description" content="Positions en direct des bus, tram et Téléo du réseau Tisséo à Toulouse.">
+<title>Tisséo Live — Véhicules en direct à Toulouse</title>
+<link rel="manifest" href="manifest.json">
+<script>
+// Leaflet est servi en local (public/vendor) : la carte doit fonctionner même
+// sans CDN. Les chaînes de secours ci-dessous ne servent qu'à couvrir un
+// déploiement où le dossier vendor est absent.
+window.__cssChain = function (urls) {
+  var i = 0;
+  (function next() {
+    if (i >= urls.length) return;
+    var l = document.createElement('link');
+    l.rel = 'stylesheet';
+    l.href = urls[i++];
+    l.onerror = next;
+    document.head.appendChild(l);
+  })();
+};
+__cssChain([
+  'vendor/leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css',
+  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css'
+]);
+__cssChain([
+  'vendor/MarkerCluster.css',
+  'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css',
+  'https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.css'
+]);
+__cssChain([
+  'vendor/MarkerCluster.Default.css',
+  'https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css',
+  'https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css',
+  'https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css'
+]);
+</script>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="dot"></span><h1>Tisséo <em>Live</em></h1><span class="city">Toulouse</span></div>
+  <div class="live" id="liveBadge"><span class="pulse"></span><span id="liveText">connexion…</span></div>
+  <div class="stats">
+    <div class="chip"><b id="statVehicles">–</b><span>véhicules</span></div>
+    <div class="chip"><b id="statLines">–</b><span>lignes</span></div>
+    <div class="chip"><b id="statAlerts">–</b><span>infos trafic</span></div>
+  </div>
+  <div class="actions">
+    <button id="btnGeo" title="Véhicules et arrêts autour de moi">📍</button>
+    <button id="btnFit" title="Zoomer sur les véhicules">⤢</button>
+    <button id="btnMap" title="Basculer fond de carte / tracés du réseau">🗺</button>
+    <button id="btnTiles" title="Basculer fond clair/sombre">🌓</button>
+    <button id="btnRefresh" title="Actualiser">↻ <span id="countdown">15</span>s</button>
+  </div>
+</header>
+
+<div class="layout">
+  <aside class="sidebar" id="sidebar">
+    <button class="sidebar-toggle" id="sidebarToggle">☰ Panneau</button>
+    <div class="sidebar-body">
+      <input id="search" type="search" placeholder="Rechercher une ligne ou un arrêt…" autocomplete="off">
+      <ul id="stopResults" class="lines stops hidden"></ul>
+      <div class="modes" id="modes">
+        <button data-mode="all" class="on">Tous</button>
+        <button data-mode="bus">Bus</button>
+        <button data-mode="tram">Tram</button>
+        <button data-mode="teleo">Téléo</button>
+      </div>
+      <div class="rowhead">
+        <h2>🚏 Arrêts favoris <span id="favStopsCount"></span></h2>
+      </div>
+      <ul id="favStopList" class="lines favs"></ul>
+      <div class="rowhead">
+        <h2>Lignes en circulation <span id="linesCount"></span></h2>
+        <button id="btnCopyLink" class="mini hidden" title="Copier le lien vers cette vue">🔗</button>
+      </div>
+      <ul id="favList" class="lines favs"></ul>
+      <ul id="lineList" class="lines"></ul>
+      <h2>Infos trafic <span id="alertsCount"></span></h2>
+      <ul id="alertList" class="alerts"></ul>
+      <p class="method">
+        <b>Comment ça marche ?</b> Tisséo ne publie pas les positions GPS de ses véhicules en open data.
+        Cette carte <b>estime</b> chaque position par interpolation entre deux arrêts à partir des horaires
+        temps réel, puis la recale sur le <b>tracé réel</b> de la ligne quand c'est possible.
+        Le métro A/B n'est pas couvert par le flux temps réel : il n'apparaît pas sur la carte, mais ses
+        <b>horaires théoriques</b> (GTFS) alimentent les prochains passages des arrêts.
+        Données : Tisséo / Toulouse Métropole (ODbL).
+      </p>
+    </div>
+  </aside>
+  <main class="mapwrap">
+    <div id="map"></div>
+    <div id="error" class="error hidden"></div>
+    <div id="toast" class="toast hidden"></div>
+    <section id="detail" class="detail hidden"></section>
+  </main>
+</div>
+
+<script src="vendor/leaflet.js"></script>
+<script>if (!window.L) { document.write('<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>'); }</script>
+<script>if (!window.L) { document.write('<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"><\/script>'); }</script>
+<script>if (!window.L) { document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"><\/script>'); }</script>
+<script src="vendor/leaflet.markercluster.js"></script>
+<script>if (window.L && !L.markerClusterGroup) { document.write('<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"><\/script>'); }</script>
+<script>if (window.L && !L.markerClusterGroup) { document.write('<script src="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"><\/script>'); }</script>
+<script>if (window.L && !L.markerClusterGroup) { document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"><\/script>'); }</script>
+<script src="app.js"></script>
+</body>
+</html>

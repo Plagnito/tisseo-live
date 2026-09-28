@@ -1,0 +1,19 @@
+{
+  "name": "tisseo-live",
+  "version": "1.0.0",
+  "description": "Carte des véhicules du réseau Tisséo (Toulouse) en temps réel — positions estimées depuis le flux GTFS-RT TripUpdates + GTFS statique.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "prepare-gtfs": "node scripts/prepare-gtfs.mjs",
+    "test": "node --test \"test/*.test.mjs\"",
+    "test:e2e": "node test/e2e.mjs"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "adm-zip": "^0.5.16"
+  }
+}
