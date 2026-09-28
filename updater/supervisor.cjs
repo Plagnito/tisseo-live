@@ -197,8 +197,10 @@ async function refreshGtfs() {
       cwd: ROOT, stdio: 'inherit', timeout: 10 * 60_000, env: { ...process.env, GTFS_OUT: 'data-live' },
     });
     const fin = scheduleEnd(LIVE);
-    log(`GTFS à jour, horaires jusqu'au ${fin ? new Date(fin).toISOString().slice(0, 10) : '?'} — redémarrage.`);
-    writeState({ gtfsRefreshedAt: new Date().toISOString(), gtfsUntil: fin ? new Date(fin).toISOString().slice(0, 10) : null });
+    // Date LOCALE : toISOString() la passerait en UTC, soit la veille.
+    const jusquau = fin ? new Date(fin).toLocaleDateString('sv-SE') : null;
+    log(`GTFS à jour, horaires jusqu'au ${jusquau ?? '?'} — redémarrage.`);
+    writeState({ gtfsRefreshedAt: new Date().toISOString(), gtfsUntil: jusquau });
     await stopApp(); fastCrashes = 0; startApp();
     if (!(await healthy())) {
       log('⚠ le serveur ne répond pas avec le nouveau GTFS : retour aux données du dépôt.');
