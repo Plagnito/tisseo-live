@@ -10,6 +10,10 @@
     "test:e2e": "node test/e2e.mjs",
     "test:e2e:itineraire": "node test/e2e-itineraire.mjs",
     "test:e2e:metro": "node test/e2e-metro.mjs",
+    "test:e2e:inventaire": "node test/e2e-inventaire.mjs",
+    "test:e2e:iti": "node test/e2e-iti.mjs",
+    "test:e2e:live": "node test/e2e-live.mjs",
+    "verifier:traces": "node scripts/verifier-traces.mjs",
     "verifier-mcp": "node scripts/verifier-mcp.mjs",
     "supervised": "node updater/supervisor.cjs"
   },

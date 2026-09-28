@@ -234,7 +234,8 @@ async function getComputed() {
   };
 }
 
-// --- API ------------------------------------------------------------
+
+
 const app = express();
 app.disable('x-powered-by');
 app.use(cors());
@@ -273,6 +274,46 @@ async function computedOrError(res) {
     return {};
   }
 }
+
+// --- Push temps réel (SSE) -------------------------------------------------
+// Le client sondait toutes les 15 s alors que le flux amont change toutes les
+// ~10 s : la moitié des rafraîchissements n'apportaient rien, et le retard
+// d'affichage oscillait entre 0 et 15 s. Le serveur sait à la seconde près
+// quand le flux change (rt_timestamp) : on le pousse, et le client ne garde
+// le sondage 15 s que comme filet de sécurité.
+const sseClients = new Set();
+
+app.get('/api/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-store',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no', // nginx/tunnel ne doivent pas mettre en tampon
+  });
+  res.write('retry: 5000\n\n');
+  res.write(`event: hello\ndata: ${JSON.stringify({ at: Math.floor(Date.now() / 1000) })}\n\n`);
+  sseClients.add(res);
+  const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
+  req.on('close', () => { clearInterval(ping); sseClients.delete(res); });
+});
+
+// Un tour de boucle partagée : à chaque changement de flux, on prévient.
+let lastPushedTs = -1;
+async function pushToStream() {
+  if (!sseClients.size) return;
+  try {
+    const rt = await fetchRealtime();
+    const ts = rt?.header?.timestamp ?? 0;
+    if (!ts || ts === lastPushedTs) return;
+    lastPushedTs = ts;
+    const payload = `event: update\ndata: ${JSON.stringify({ rt_timestamp: ts })}\n\n`;
+    for (const res of sseClients) {
+      try { res.write(payload); } catch { sseClients.delete(res); }
+    }
+  } catch { /* le flux est déjà en mode dégradé, le client le verra au */ }
+  // prochain GET /api/vehicles */
+}
+setInterval(pushToStream, 3000).unref();
 
 app.get('/api/health', (req, res) => res.json({ ok: true, uptime_s: Math.round(process.uptime()) }));
 

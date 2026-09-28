@@ -1,6 +1,7 @@
 // Service worker Tisséo Live — cache du shell applicatif uniquement.
 // Les données temps réel (/api/*) ne sont JAMAIS mises en cache ici.
 const CACHE = 'tisseo-live-v4';
+const GEO = 'tisseo-geo-v1'; // géométrie du réseau : survit à une coupure
 const SHELL = [
   './', './index.html', './styles.css', './app.js', './manifest.json', './icon.svg',
   './vendor/leaflet.js', './vendor/leaflet.css', './vendor/leaflet.markercluster.js',
@@ -22,14 +23,42 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys
+        .filter((k) => k !== CACHE && k !== GEO)
+        .map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.pathname.startsWith('/api/')) return; // temps réel : réseau seul
+  if (e.request.method !== 'GET') return;
+  // Le fond vectoriel du réseau est la SEULE chose qui manque pour que la
+  // carte reste utilisable hors ligne : on le met en cache, contrairement au
+  // reste de /api/* (positions et horaires, qui doivent rester frais).
+  if (url.pathname === '/api/network') {
+    e.respondWith(
+      caches.open(GEO).then(async (c) => {
+        const hit = await c.match(e.request);
+        if (hit) {
+          // Rafraîchissement opportuniste : on sert tout de suite, on met à
+          // jour pour la prochaine ouverture.
+          fetch(e.request).then((res) => { if (res.ok) c.put(e.request, res.clone()); }).catch(() => {});
+          return hit;
+        }
+        try {
+          const res = await fetch(e.request);
+          if (res.ok) c.put(e.request, res.clone());
+          return res;
+        } catch (err) {
+          return new Response(JSON.stringify({ error: 'Réseau indisponible', lines: [] }),
+            { status: 503, headers: { 'Content-Type': 'application/json' } });
+        }
+      })
+    );
+    return;
+  }
+  if (url.pathname.startsWith('/api/')) return; // temps réel : réseau seul
   e.respondWith(
     caches.match(e.request).then(
       (hit) => hit || fetch(e.request).then((res) => {

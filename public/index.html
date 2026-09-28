@@ -66,6 +66,19 @@ __cssChain([
   <aside class="sidebar" id="sidebar">
     <button class="sidebar-toggle" id="sidebarToggle">☰ Panneau</button>
     <div class="sidebar-body">
+      <details class="planner" id="planner">
+        <summary>🧭 Itinéraire</summary>
+        <div class="planner-form">
+          <input id="jFrom" type="search" placeholder="De : Capitole, une adresse…" autocomplete="off">
+          <input id="jTo" type="search" placeholder="À : Jean Jaurès, une adresse…" autocomplete="off">
+          <div class="planner-actions">
+            <button id="jGo" class="mini on">Calculer</button>
+            <button id="jSwap" class="mini" title="Inverser départ et arrivée">⇅</button>
+            <button id="jClose" class="mini" title="Fermer">✕</button>
+          </div>
+        </div>
+        <div id="jResults" class="jresults"></div>
+      </details>
       <input id="search" type="search" placeholder="Rechercher une ligne ou un arrêt…" autocomplete="off">
       <ul id="stopResults" class="lines stops hidden"></ul>
       <div class="modes" id="modes">

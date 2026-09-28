@@ -7,6 +7,10 @@ const state = {
   vehicles: [],
   routes: [],
   alerts: [],
+  // Lignes citées par au moins une info trafic non anodine : leurs véhicules
+  // reçoivent un contour d'alerte sur la carte.
+  alertRoutes: new Set(),
+  alertHover: null, // lignes survolées dans la liste des infos trafic
   rtTimestamp: 0,
   filterLine: null, // route_id
   mode: 'all', // all | bus | tram | teleo
@@ -16,6 +20,7 @@ const state = {
   stopDeps: [],
   stopResults: [], // résultats de /api/stops/search
   stopFavs: readJson('tisseo.live.stops', []), // [{ id, name, lat, lon }]
+  notifyStops: new Set(readJson('tisseo.live.notify', [])), // arrêts à surveiller
   favDeps: new Map(), // stop_id -> départs (favoris)
   nearby: null, // { lat, lon, stops: [...] }
   routeDetail: new Map(), // route_id -> { variants }
@@ -315,8 +320,9 @@ async function loadAll() {
     if (state.nearby) await loadNearby(state.nearby.lat, state.nearby.lon, true);
     // L'itinéraire affiché suit le véhicule : il doit être redessiné avec les
     // nouvelles positions, sinon la traînée reste figée.
-    if (state.selectedId) await loadVehicleItinerary();
     renderAll(vehRes.stale);
+    if (state.selectedId) await loadVehicleItinerary();
+    checkNotifications();
   } catch (err) {
     showError('Données temps réel injoignables (' + err.message + '). Nouvel essai dans ' + REFRESH_S + ' s…');
   }
@@ -453,6 +459,7 @@ function renderFavStops() {
     html += `<li class="favstop${state.selectedStop?.id === s.id ? ' sel' : ''}" data-stop="${escapeHtml(s.id)}">` +
       `<div class="stopbody"><b>${escapeHtml(s.name)}</b>` +
       (deps.length ? deps.slice(0, 3).map(depHtml).join('') : '<div class="nodep">chargement…</div>') + '</div>' +
+      `<button class="bell" data-notify="${escapeHtml(s.id)}" title="Être prévenu avant chaque passage">🔕</button>` +
       `<button class="fav on" data-unfav title="Retirer des favoris">★</button></li>`;
   }
   setHtml($('favStopList'), html);
@@ -465,6 +472,13 @@ $('favStopList').addEventListener('click', (e) => {
   if (!li) return;
   const s = state.stopFavs.find((x) => x.id === li.dataset.stop);
   if (!s) return;
+  const bell = e.target.closest('[data-notify]');
+  if (bell) {
+    e.stopPropagation();
+    if (state.notifyStops.has(s.id)) toggleNotify(false);
+    else askNotify();
+    return;
+  }
   if (e.target.closest('[data-unfav]')) { e.stopPropagation(); toggleStopFav(s); }
   else focusStop(s);
 });
@@ -639,7 +653,7 @@ class PillIcon extends L.DivIcon {
   }
 }
 
-function paintPillEl(el, v, dimmed, selected) {
+function paintPillEl(el, v, dimmed, selected, alertOn) {
   if (!el) return;
   el.classList.toggle('at_stop', v.status === 'at_stop');
   el.classList.toggle('dimmed', !!dimmed);
@@ -647,6 +661,9 @@ function paintPillEl(el, v, dimmed, selected) {
   el.classList.toggle('moving', v.status === 'en_route' && v.bearing != null);
   // Véhicule théorique : on ne le présente jamais comme du temps réel.
   el.classList.toggle('theo', !!v.theoretical);
+  // Ligne perturbée : contour d'alerte, pour voir d'un coup d'œil ce que
+  // traversent les véhicules affectés par une info trafic.
+  el.classList.toggle('alert', !!alertOn);
   el.style.setProperty('--c', '#' + v.color);
   el.style.setProperty('--tc', '#' + v.text_color);
   el.style.setProperty('--rot', (v.bearing ?? 0) + 'deg');
@@ -654,10 +671,10 @@ function paintPillEl(el, v, dimmed, selected) {
   if (lb && lb.textContent !== v.line) lb.textContent = v.line;
 }
 
-function paintPill(m, v, dimmed, selected) {
-  m.__paint = [v, dimmed, selected];
+function paintPill(m, v, dimmed, selected, alertOn) {
+  m.__paint = [v, dimmed, selected, !!alertOn];
   const el = m._icon?.firstElementChild;
-  if (el) paintPillEl(el, v, dimmed, selected);
+  if (el) paintPillEl(el, v, dimmed, selected, alertOn);
 }
 
 // --- mouvement continu, piloté par la vitesse mesurée -------------------
@@ -795,10 +812,13 @@ function renderMarkers() {
   for (const v of vis) {
     const k = vKey(v);
     const selected = state.selectedId === k;
+    const alertOn = !v.theoretical && (state.alertRoutes.has(v.route_id)
+      || (state.alertHover && state.alertHover.has(v.route_id)));
     // Un véhicule sélectionné reste mis en évidence même si le filtre l'a
     // écarté de la vue : sinon il disparaît et on ne sait plus où on l'a
     // cliqué. Le reste, en revanche, s'assombrit.
-    const dimmed = (state.filterLine != null && v.route_id !== state.filterLine) || (state.selectedId != null && !selected);
+    let dimmed = (state.filterLine != null && v.route_id !== state.filterLine) || (state.selectedId != null && !selected);
+    if (state.alertHover) dimmed = dimmed || !alertOn;
     let m = markers.get(k);
     if (!m) {
       const icon = new PillIcon({ iconSize: [46, 24], iconAnchor: [23, 12], html: PILL_HTML });
@@ -816,7 +836,7 @@ function renderMarkers() {
     } else {
       setMarkerFix(m, v.lat, v.lon);
     }
-    paintPill(m, v, dimmed, selected);
+    paintPill(m, v, dimmed, selected, alertOn);
     const tip = v.theoretical
       ? `${escapeHtml(v.line)} → ${escapeHtml(v.destination)} <em>(théorique)</em>`
       : `${escapeHtml(v.line)} → ${escapeHtml(v.destination)}`;
@@ -934,6 +954,117 @@ function onLineListClick(e) {
 $('favList').addEventListener('click', onLineListClick);
 $('lineList').addEventListener('click', onLineListClick);
 
+// ---------- itinéraire A → B ----------------------------------------------
+// Le calcul est fait côté serveur (Dijkstra sur ~20 k états, marche,
+// correspondances, horaires temps réels appliqués segment par segment).
+// L'interface se contente de le formater et de le dessiner.
+const journeyLayer = L.layerGroup().addTo(map);
+let journey = null;
+
+function journeyLegHtml(leg) {
+  if (leg.type === 'walk') {
+    return `<li class="jleg walk"><b>🚶 ${Math.round(leg.seconds / 60)} min</b>` +
+      `<span>${escapeHtml(leg.from)} → ${escapeHtml(leg.to)}</span></li>`;
+  }
+  const dep = leg.depart ? fmtTime(leg.depart) : '';
+  const arr = leg.arrive ? fmtTime(leg.arrive) : '';
+  return `<li class="jleg" data-leg="${escapeHtml(leg.route_id)}" data-from="${escapeHtml(leg.from_id)}" data-to="${escapeHtml(leg.to_id)}">` +
+    `<b><span class="dline" style="background:#${leg.color};color:#${leg.text_color}">${escapeHtml(leg.line)}</span> ${escapeHtml(leg.from)} → ${escapeHtml(leg.to)}</b>` +
+    `<span class="jtime">${dep} – ${arr}` +
+    `${leg.transfer_s ? ` <em>+${Math.round(leg.transfer_s / 60)} min de correspondance</em>` : ''}` +
+    `${leg.real ? '' : ' <em>estimé</em>'}</span></li>`;
+}
+
+function renderJourney() {
+  const box = $('jResults');
+  if (!journey) { box.innerHTML = ''; return; }
+  if (journey.error) {
+    setHtml(box, `<div class="jerr">${escapeHtml(journey.error)}${journey.hint ? '<br><small>' + escapeHtml(journey.hint) + '</small>' : ''}</div>`);
+    return;
+  }
+  const legs = journey.legs || [];
+  const warnings = [];
+  if (journey.estimates) warnings.push('horaires estimés : le temps réel ne couvre pas toutes les lignes');
+  if (journey.out_of_service?.length) {
+    warnings.push('hors service maintenant : ' + journey.out_of_service.map((r) => r.line).join(', '));
+  }
+  setHtml(box,
+    `<div class="jhead"><b>${Math.round((journey.duration_s || 0) / 60)} min</b>` +
+    `<span>départ ${fmtTime(journey.depart_at)} · arrivée ${fmtTime(journey.arrive_at)}` +
+    `${journey.transfers ? ` · ${journey.transfers} correspondance${journey.transfers > 1 ? 's' : ''}` : ' · direct'}</span></div>` +
+    (warnings.length ? `<div class="jwarn">⚠ ${warnings.map(escapeHtml).join('<br>⚠ ')}</div>` : '') +
+    `<ol class="jlegs">${legs.map(journeyLegHtml).join('')}</ol>`);
+  box.querySelectorAll('li.jleg[data-leg]').forEach((li) => {
+    li.onclick = () => focusJourneyLeg(li.dataset.leg, li.dataset.from, li.dataset.to);
+  });
+}
+
+// Dessine un trajet : on va chercher le vrai tracé de la ligne dans le sens
+// emprunté (from_id → to_id), pas une corde entre les deux arrêts.
+async function focusJourneyLeg(routeId, fromId, toId) {
+  journeyLayer.clearLayers();
+  if (!routeId || routeId === 'walk') return;
+  try {
+    const detail = await loadRouteDetail(routeId);
+    const variant = (detail.variants || []).find((v) => {
+      const ids = v.stops.map((s) => s.id);
+      return ids.includes(fromId) && ids.includes(toId) && ids.indexOf(fromId) < ids.indexOf(toId);
+    }) || (detail.variants || [])[0];
+    if (!variant) return;
+    const color = '#' + (routeById.get(routeId)?.color || 'dc006b');
+    const latlngs = variant.shape.map(([la, lo]) => [la, lo]);
+    L.polyline(latlngs, { color: '#000', weight: 11, opacity: .35, lineCap: 'round' }).addTo(journeyLayer);
+    L.polyline(latlngs, { color: '#fff', weight: 8, opacity: .8, lineCap: 'round' }).addTo(journeyLayer);
+    L.polyline(latlngs, { color, weight: 5, opacity: 1, lineCap: 'round' }).addTo(journeyLayer);
+    for (const s of variant.stops) {
+      if (s.lat == null) continue;
+      const isEnd = s.id === fromId || s.id === toId;
+      L.circleMarker([s.lat, s.lon], isEnd
+        ? { radius: 7, color: '#fff', weight: 3, fillColor: color, fillOpacity: 1 }
+        : { radius: 3.5, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: .9 })
+        .bindTooltip(escapeHtml(s.name), { direction: 'top', className: 'bus-tip' })
+        .addTo(journeyLayer);
+    }
+    map.flyToBounds(L.latLngBounds(latlngs).pad(0.08), { duration: 0.7 });
+  } catch (e) { toast('Tracé de la ligne indisponible.'); }
+}
+
+async function askJourney() {
+  const from = $('jFrom').value.trim();
+  const to = $('jTo').value.trim();
+  if (!from || !to) { toast('Indiquez un départ et une arrivée.'); return; }
+  setHtml($('jResults'), '<div class="jerr">Calcul en cours…</div>');
+  $('planner').open = true;
+  try {
+    const r = await fetch(`/api/journey?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+    const j = await r.json();
+    journey = j.error ? { error: j.error, hint: j.hint } : j;
+    renderJourney();
+    journeyLayer.clearLayers();
+    if (!j.error) {
+      // On dessine d'emblée le premier trajet emprunté : l'utilisateur voit
+      // où on l'emmène avant même de cliquer une étape.
+      const ride = (j.legs || []).find((l) => l.type === 'ride');
+      if (ride) focusJourneyLeg(ride.route_id, ride.from_id, ride.to_id);
+    }
+  } catch (e) {
+    journey = { error: 'Calcul indisponible (' + e.message + ')' };
+    renderJourney();
+  }
+}
+
+$('jGo').onclick = askJourney;
+$('jSwap').onclick = () => {
+  const a = $('jFrom').value, b = $('jTo').value;
+  $('jFrom').value = b; $('jTo').value = a;
+  if (journey && !journey.error) askJourney();
+};
+$('jClose').onclick = () => { journey = null; journeyLayer.clearLayers(); renderJourney(); };
+$('planner').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); askJourney(); }
+  if (e.key === 'Escape') { journey = null; journeyLayer.clearLayers(); renderJourney(); }
+});
+
 function selectLine(routeId) {
   state.filterLine = routeId;
   state.selectedId = null;
@@ -977,6 +1108,61 @@ function pickVariant(variants, v) {
   return best;
 }
 
+// ---------- notification de prochain passage ------------------------------
+// Le serveur calcule déjà les départs d'un arrêt ; il ne manquait que le
+// « réveille-moi quand ça arrive ». On garde en mémoire les départs déjà
+// signalés pour ne pas notifier deux fois le même bus.
+const notified = new Set();
+
+async function askNotify() {
+  if (!('Notification' in window)) { toast('Notifications non supportées par ce navigateur.'); return; }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { toast('Notifications refusées.'); renderDetail(); return; }
+  toggleNotify(true);
+  toast('Vous serez prévenu 2 minutes avant chaque passage.');
+}
+
+function toggleNotify(on) {
+  if (on) state.stopFavs.forEach((s) => state.notifyStops.add(s.id));
+  else state.notifyStops.clear();
+  try { localStorage.setItem('tisseo.live.notify', JSON.stringify([...state.notifyStops])); } catch { /* privé */ }
+  updateNotifyButtons();
+  checkNotifications(true);
+}
+
+function updateNotifyButtons() {
+  document.querySelectorAll('[data-notify]').forEach((b) => {
+    const on = state.notifyStops.has(b.dataset.notify);
+    b.classList.toggle('on', on);
+    b.textContent = on ? '🔔' : '🔕';
+    b.title = on ? 'Couper les alertes de cet arrêt' : 'être prévenu avant chaque passage';
+  });
+}
+
+function checkNotifications(force) {
+  if (!('Notification' in window) || Notification.permission !== 'granted' || document.hidden) return;
+  const now = Math.floor(Date.now() / 1000);
+  for (const [stopId, deps] of state.favDeps) {
+    if (!state.notifyStops.has(stopId)) continue;
+    for (const d of deps || []) {
+      const key = `${stopId}|${d.route_id}|${d.dir ?? ''}|${d.time}`;
+      if (notified.has(key)) continue;
+      // 2 minutes de marge : assez pour partir, pas trop tôt pour rien rater.
+      if (d.time > now && d.time - now <= 120) {
+        notified.add(key);
+        const nom = state.stopFavs.find((s) => s.id === stopId)?.name || 'votre arrêt';
+        try {
+          new Notification(`${d.line} dans ${Math.max(1, Math.round((d.time - now) / 60))} min`, {
+            body: `${nom} → ${d.destination || ''}`.trim(),
+            tag: key,
+            icon: 'icon.svg',
+          });
+        } catch { /* certains navigateurs exigent un service worker */ }
+      }
+    }
+  }
+}
+
 async function selectVehicle(key) {
   state.selectedId = key;
   state.selectedStop = null;
@@ -991,6 +1177,15 @@ async function selectVehicle(key) {
 
 function currentVehicle() {
   return state.vehicles.find((v) => vKey(v) === state.selectedId) || null;
+}
+
+// Désélection : on coupe aussi le suivi et l'itinéraire affiché.
+function clearVehicle() {
+  state.selectedId = null;
+  state.selVeh = null;
+  state.follow = false;
+  vehLayer.clearLayers();
+  renderMarkers();
 }
 
 async function loadVehicleItinerary() {
@@ -1068,6 +1263,11 @@ function renderAlerts() {
   const list = state.filterLine
     ? state.alerts.filter((a) => a.routes.length === 0 || a.routes.includes(state.filterLine))
     : state.alerts;
+  // Une « info réseau » sans ligne citée (travaux, info générale) ne
+  // perturbe rien en particulier : on ne la propage pas aux véhicules.
+  state.alertRoutes = new Set(
+    state.alerts.filter((a) => (a.severity ?? 0) > 0).flatMap((a) => a.routes || [])
+  );
   if (!list.length) { setHtml($('alertList'), '<li class="sev1">Aucune perturbation signalée.</li>'); return; }
   let html = '';
   for (const a of list.slice(0, 30)) {
@@ -1075,12 +1275,29 @@ function renderAlerts() {
       const r = routeById.get(id);
       return r ? escapeHtml(r.short_name) : '';
     }).filter(Boolean).join(', ');
-    html += `<li class="sev${a.severity ?? 0}"><b>${escapeHtml(stripHtml(a.title) || 'Info réseau')}</b>` +
+    html += `<li class="sev${a.severity ?? 0}"${(a.severity ?? 0) > 0 ? ' data-alert="1"' : ''}><b>${escapeHtml(stripHtml(a.title) || 'Info réseau')}</b>` +
       (routeTags ? `<div class="aroutes">Lignes : ${routeTags}</div>` : '') +
       (a.url ? ` <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">détails → </a>` : '') + '</li>';
   }
   setHtml($('alertList'), html);
 }
+
+// Survol d'une info trafic : on met en évidence les véhicules des lignes
+// citées, sans changer le filtre (donc sans perdre la vue d'ensemble).
+$('alertList').addEventListener('mouseover', (e) => {
+  const li = e.target.closest('li[data-alert]');
+  if (!li) return;
+  const txt = li.textContent;
+  const ids = [...routeById.values()].filter((r) => txt.includes(r.short_name)).map((r) => r.route_id);
+  if (!ids.length) return;
+  state.alertHover = new Set(ids);
+  renderMarkers();
+});
+$('alertList').addEventListener('mouseleave', () => {
+  if (!state.alertHover) return;
+  state.alertHover = null;
+  renderMarkers();
+});
 
 function relTime(t) {
   const diff = t - Math.floor(Date.now() / 1000);
@@ -1110,13 +1327,24 @@ function renderDetail() {
     const s = state.selectedStop;
     const fav = isStopFav(s.id);
     let html = `<button class="close" id="dClose">✕</button>` +
-      `<h3>🚏 ${escapeHtml(s.name)} <button id="dFav" class="fav ${fav ? 'on' : ''}" title="Arrêt favori">${fav ? '★' : '☆'}</button></h3>`;
+      `<h3>🚏 ${escapeHtml(s.name)}` +
+      `<button id="dFav" class="fav ${fav ? 'on' : ''}" title="Arrêt favori">${fav ? '★' : '☆'}</button>` +
+      `<button id="dNotify" class="bell" data-notify="${escapeHtml(s.id)}" title="Être prévenu avant chaque passage">🔕</button></h3>`;
     if (!state.stopDeps.length) html += '<div class="nodep">Aucun passage dans les 2 prochaines heures.</div>';
     for (const d of state.stopDeps.slice(0, 10)) html += depHtml(d);
     setHtml(box, html);
     box.classList.remove('hidden');
     $('dClose').onclick = () => { state.selectedStop = null; state.stopDeps = []; stopLayer.clearLayers(); box.classList.add('hidden'); renderStopResults(); renderFavStops(); };
     $('dFav').onclick = () => toggleStopFav(state.selectedStop);
+    $('dNotify').onclick = () => {
+      const id = state.selectedStop.id;
+      if (state.notifyStops.has(id)) toggleNotify(false);
+      else {
+        if (!isStopFav(id)) toggleStopFav(state.selectedStop);
+        askNotify();
+      }
+    };
+    updateNotifyButtons();
     return;
   }
   // 3) fiche véhicule
@@ -1267,16 +1495,50 @@ function fitNetwork() {
 }
 
 // ---------- boucle ----------
+// Le serveur pousse les changements de flux (SSE) : la boucle ci-dessous
+// n'est plus qu'un filet de sécurité si le push est coupé, plus le compteur
+// et le rafraîchissement de l'en-tête. Elle reste à 15 s car c'est elle qui
+// rattrape une reconnexion perdue.
+let sseLive = false;
+let pending = false;
+
 setInterval(() => {
   if (document.hidden) return;
   state.countdown -= 1;
   if (state.countdown <= 0) {
     state.countdown = REFRESH_S;
     loadAll();
+  } else if (!sseLive) {
+    // Sans push, on rafraîchit dès que le compteur est revenu au tiers :
+    // inutile d'attendre 15 s quand le flux change toutes les 10 s.
+    if (state.countdown < REFRESH_S * 0.6) state.countdown = REFRESH_S;
   }
-  $('countdown').textContent = state.countdown;
+  $('countdown').textContent = sseLive ? 'live' : state.countdown;
   renderHeader(false);
 }, 1000);
+
+function connectStream() {
+  if (!('EventSource' in window)) return;
+  let es;
+  try {
+    es = new EventSource('/api/stream');
+  } catch { return; }
+  es.addEventListener('hello', () => { sseLive = true; });
+  es.addEventListener('update', (e) => {
+    state.countdown = REFRESH_S;
+    // Deux poussées rapprochées ne déclenchent qu'un rechargement : on
+    // ignore ce qui arrive pendant qu'une requête est déjà en vol.
+    if (pending) return;
+    pending = true;
+    loadAll().finally(() => { pending = false; });
+    try {
+      const ts = JSON.parse(e.data)?.rt_timestamp;
+      if (ts) state.rtTimestamp = ts;
+    } catch { /* donnée illisible : le rechargement est déjà lancé */ }
+  });
+  es.onerror = () => { sseLive = false; /* EventSource reconnecte tout seul */ };
+  es.onopen = () => { sseLive = true; };
+}
 
 // PWA : mise en cache du shell applicatif
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
@@ -1286,6 +1548,8 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
 // deep link ?ligne=L1 (nom court ou route_id)
 (async function init() {
   updateMapButton();
+  updateNotifyButtons();
+  connectStream();
   await loadTiles();
   if (vectorOnly) { loadNetwork().then(fitNetwork); }
   await loadAll();

@@ -35,11 +35,50 @@ npm start
 | `GET /api/alerts` | Perturbations / infos réseau du flux |
 | `GET /api/route-detail?route_id=…` | Tracés + arrêts d'une ligne, par sens |
 | `GET /api/network` | Tracés de **toutes** les lignes, simplifiés (`?tol=6&cell=5` en mètres) |
+| `GET /api/stream` | **Flux temps réel (SSE)** : un événement à chaque changement du flux amont |
 | `GET /api/tiles` | Fonds de carte **vérifiés** par le serveur (`?force=1` pour re-tester) |
 | `GET /api/departures?stop_id=…` | Prochains passages à un arrêt (temps réel) |
 | `GET /api/nearby?lat=…&lon=…&n=…` | Arrêts les plus proches + leurs passages |
 | `GET /api/journey?from=…&to=…` | Itinéraire A→B (nom d'arrêt, id ou `lat,lon`) |
 | `GET /api/status` | Santé : âge du flux, compteurs, véhicules recalés, erreurs amont |
+
+## Ce que fait la carte
+
+- **Positions le long du tracé.** Un véhicule n'est pas posé sur une corde
+  entre deux arrêts puis rapproché au plus près de la ligne : on parcourt la
+  polyligne du GTFS entre l'abscisse de l'arrêt de départ et celle de l'arrêt
+  d'arrivée. `on_route` distingue « sur la route » de « rapproché ».
+  Contrôle qualité : `npm run verifier:traces` — sur les 124 lignes, le pire
+  arrêt est à 32 m de son tracé.
+- **Métro A/B et Téléo.** Absents du GTFS-RT de Tisséo (ou plus aux heures
+  creuses), leurs courses sont reconstruites depuis les horaires du GTFS
+  statique et animées sur le tracé. Marqués **théoriques** partout : contour
+  pointillé, badge dans la fiche, mention dans l'info-bulle. La liste des
+  modes est explicite (`TISSEO_THEO_MODES`), jamais déduite d'une absence
+  ponctuelle — sinon des rames fantômes apparaissent dès que le réseau est
+  calme. `TISSEO_NOW=<epoch>` fige l'horloge (tests, rejeu).
+- **Mouvement.** La vitesse de chaque véhicule est mesurée entre deux points
+  observés, lissée, et la pastille avance en continu à cette vitesse
+  (routage à l'estime) : une nouvelle donnée corrige la trajectoire au lieu
+  de relancer l'animation.
+- **Fond de carte qui suit le zoom.** La sonde vérifie la **limite de zoom
+  native** de chaque fournisseur (une tuile identique à celle du niveau
+  précédent = placeholder) ; le client passe en `maxNativeZoom` et bascule sur
+  un fournisseur qui a des données au niveau demandé. Sans cela, le fond gris
+  foncé d'Esri affichait « map data not available » dès le z17.
+- **Push, pas sondage.** `/api/stream` (SSE) prévient à chaque changement du
+  flux amont ; le polling 15 s ne reste qu'en filet si la connexion tombe.
+- **Infos trafic sur la carte.** Les lignes citées par une perturbation
+  reçoivent un contour d'alerte ; survoler une info met ses véhicules en
+  évidence.
+- **Notifications.** Une cloche sur un arrêt favori prévient 2 minutes avant
+  chaque passage.
+- **Inventaire.** Les compteurs « véhicules » et « lignes » ouvrent la liste
+  de ce qui roule, avec la position de chaque véhicule. Un clic sur une ligne
+  la filtre, la trace, et ouvre ses véhicules.
+- **Itinéraire A→B.** Dijkstra sur ~20 k états côté serveur (marche,
+  correspondances, horaires temps réels appliqués segment par segment), tracé
+  sur la carte dans le sens emprunté.
 
 ## Connecteur MCP (ChatGPT, Claude…)
 
@@ -140,18 +179,23 @@ de charge, et ressert les dernières données connues en cas de coupure (flag `s
 ## Tests
 
 ```powershell
-npm test        # tests unitaires (node:test) : géométrie, recherche,
-                # simplification du réseau, contrôle des tuiles, connecteur MCP
+npm test        # tests unitaires (node:test) : géométrie, interpolation sur
+                # le tracé, véhicules théoriques, recherche, fonds de carte,
+                # connecteur MCP
 npm start       # dans un terminal…
-npm run test:e2e              # …puis vérifie dans un vrai navigateur que la
-                              # carte s'affiche, et que le mode tracés prend
-                              # le relais quand aucune tuile ne charge
-npm run test:e2e:itineraire   # …et que le clic sur un véhicule affiche son
-                              # itinéraire sans rebâtir les icônes à chaque
-                              # actualisation
+npm run test:e2e              # carte réelle + repli mode tracés sans tuiles
+npm run test:e2e:itineraire   # clic véhicule → itinéraire, fluidité, suivi
+npm run test:e2e:metro        # métro théorique (serveur dédié, horloge à 10h00)
+npm run test:e2e:inventaire   # inventaire lignes/véhicules, zoom au-delà du natif
+npm run test:e2e:iti          # planificateur A→B
+npm run test:e2e:live         # push SSE, alertes sur la carte, notifications
 ```
 
-Les deux tests `e2e` ont besoin de Playwright (installé à part, `npm i -D playwright`).
+Les tests `e2e` ont besoin de Playwright (installé à part, `npm i -D playwright`).
+
+```powershell
+npm run verifier:traces   # chaque arrêt est-il bien sur le tracé de sa ligne ?
+```
 
 ## Régénérer les données statiques
 

@@ -76,14 +76,19 @@ async function probe(label, { blockTiles = false, clickMapButton = false, wait =
 const carte = await probe('a-carte');
 ok(carte.leaflet, 'Leaflet chargé depuis public/vendor');
 ok(carte.tuiles > 4, `des tuiles chargées (${carte.tuiles})`);
-ok(carte.vehicules > 20, `des véhicules affichés (${carte.vehicules})`);
+// Combien de véhicules le flux annonce-t-il à cet instant ? Le nombre
+// varie selon l'heure (le réseau est quasi vide la nuit) : on compare donc
+// l'affichage à l'API plutôt que d'exiger un effectif.
+const announced = (await (await fetch(URL + 'api/vehicles')).json()).vehicles.length;
+ok(carte.vehicules > 0, `des véhicules affichés (${carte.vehicules}, l'API en annonce ${announced})`);
+ok(carte.vehicules <= announced, 'on n\'invente pas de véhicules hors du flux');
 ok(!carte.notiles, 'fond de carte actif');
 
 // 2. Plus aucun fond ne répond : repli automatique sur les tracés.
 const sansTuile = await probe('b-sans-tuiles', { blockTiles: true });
 ok(sansTuile.notiles, 'repli automatique en mode tracés');
 ok(sansTuile.tracés > 100, `réseau entier dessiné (${sansTuile.tracés} tracés)`);
-ok(sansTuile.vehicules > 20, `véhicules toujours affichés (${sansTuile.vehicules})`);
+ok(sansTuile.vehicules > 0, `véhicules toujours affichés sans tuile (${sansTuile.vehicules})`);
 
 // 3. Bascule manuelle, sans aucune tuile.
 const manuel = await probe('c-traces', { blockTiles: true, clickMapButton: true });

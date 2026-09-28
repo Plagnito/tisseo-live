@@ -62,7 +62,11 @@ const avant = await page.evaluate(() => ({
   icones: document.querySelectorAll('.leaflet-marker-icon').length,
   pastilles: document.querySelectorAll('.pill').length,
 }));
-ok(avant.icones > 20, `marqueurs affichés (${avant.icones}, dont ${avant.pastilles} pastilles)`);
+// Idem : la nuit il ne circule presque rien, on ne peut pas exiger 20
+// pastilles. On vérifie que le rendu est cohérent avec l'API.
+const announced = (await (await fetch(URL + 'api/vehicles')).json()).vehicles.length;
+ok(avant.icones > 0 && avant.icones <= Math.max(announced, 3),
+  `marqueurs affichés (${avant.icones}, dont ${avant.pastilles} pastilles ; API : ${announced})`);
 
 const rotAvant = await page.evaluate(() => document.querySelector('.leaflet-marker-icon .pill')?.style.getPropertyValue('--rot'));
 await page.evaluate(() => { window.__t = performance.now(); window.__frames = 0; window.__latlng = 0; window.__pillMut = 0; state.countdown = 0; });
