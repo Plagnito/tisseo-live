@@ -53,6 +53,16 @@ const DATA_FILES = ['routes.json', 'stops.json', 'route_variants.json', 'schedul
 const DATA_DIR = DATA_FILES.every((f) => existsSync(join(__dirname, 'data-live', f))) ? 'data-live' : 'data';
 const readData = (f) => JSON.parse(readFileSync(join(__dirname, DATA_DIR, f), 'utf-8'));
 console.log(`Donnees GTFS : ${DATA_DIR}/`);
+// Facultatifs (format 2 du GTFS exporté) : tarifs et métadonnées. Un
+// data-live/ d'avant ce format ne les a pas : on les lit alors dans data/.
+const readOptional = (f) => {
+  for (const dir of [DATA_DIR, 'data']) {
+    try { return JSON.parse(readFileSync(join(__dirname, dir, f), 'utf-8')); } catch { /* suivant */ }
+  }
+  return null;
+};
+const fares = readOptional('fares.json');
+const gtfsMeta = readOptional('meta.json');
 const routes = readData('routes.json');
 const stops = readData('stops.json');
 const variants = readData('route_variants.json');
@@ -543,12 +553,24 @@ const mcp = createMcpServer({
     liveOrNull: computedOrNull,
     departuresAt: (id, c, nowSec, n) => departuresAt(id, c, nowSec, n).departures,
     nearestStopPoints,
-    journey: async (from, to, at) => {
+    journey: async (from, to, at, extra = {}) => {
       try { await getComputed(); } catch { /* sans RT : horaires théoriques */ }
-      return router.journey(from, to, at, journeyOpts);
+      return router.journey(from, to, at, { ...journeyOpts, ...extra });
     },
     track: (routeId, id) => history.get(`${routeId}|${id}`),
     scheduleUntil: () => scheduleUntil,
+    // Horaires théoriques bruts : entrées d'un arrêt, motifs actifs un jour donné.
+    scheduleEntries: (stopId) => schedules?.byStop.get(stopId) ?? [],
+    patternsOn: (ymd) => schedules?.patternsByDate.get(ymd) ?? [],
+    reach: (fromStop, maxS, exclude, at) => {
+      const excluded = new Set(exclude ?? []);
+      for (const r of routes) if (inService(r.route_id, at) === false) excluded.add(r.route_id);
+      return router.reach(fromStop, maxS, excluded.size ? excluded : null);
+    },
+    nearestStop: (lat, lon) => router.nearestStop(lat, lon),
+    fares,
+    gtfsMeta,
+    publicUrl: process.env.PUBLIC_URL || 'https://tisseo.plagnito.com',
     geocode,
   }),
 });

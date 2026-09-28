@@ -38,6 +38,19 @@ const CAS = [
   ['itineraire', { depart: 'Gare Matabiau', arrivee: 'aéroport de Blagnac' }],
   ['itineraire', { depart: '12 rue Alsace-Lorraine', arrivee: 'Université Paul Sabatier', heure_depart: '8h15' }],
   ['perturbations', { ligne: 'A' }],
+  ['perturbations', { recherche: 'travaux' }],
+  ['vehicules', { mode: 'metro' }],
+  ['arret', { arret: 'Jean Jaurès' }],
+  ['horaires', { arret: 'Capitole', ligne: 'A', jour: 'samedi' }],
+  ['horaires', { arret: 'Jean Jaurès', jour: 'demain', detail: false }],
+  ['ligne', { ligne: 'B', avec_arrets: false }],
+  ['itineraire', { depart: 'Capitole', arrivee: 'Université Paul Sabatier', arriver_avant: '9h00', options: 3 }],
+  ['itineraire', { depart: 'Gare Matabiau', arrivee: 'Basso Cambo', heure_depart: '17:30', sans_modes: ['bus'] }],
+  ['accessibles_depuis', { lieu: 'Capitole', minutes: 15, limite: 5 }],
+  ['tarifs', {}],
+  ['tarifs', { ligne: 'AERO' }],
+  ['search', { query: 'Jean Jaurès' }],
+  ['fetch', { id: 'ligne:line:61' }],
 ];
 
 let echecs = 0;

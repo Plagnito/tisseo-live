@@ -262,3 +262,141 @@ test('router : une ligne hors service est écartée, avec repli si plus rien ne 
   assert.equal(attente.legs[0].depart, 1600);
   assert.equal(attente.legs[0].scheduled, true);
 });
+
+// --- outils ajoutés : jours, grilles, fréquences, tarifs, options ---------------
+import { parseJour, fmtSec, frequences } from '../lib/tools.mjs';
+
+test('parseJour : aujourd\'hui, demain, jour de semaine, dates', () => {
+  const now = parisToEpoch(2026, 9, 29, 10, 0); // mardi 29 septembre 2026
+  assert.equal(parseJour(undefined, now).ymd, '20260929');
+  assert.equal(parseJour('demain', now).ymd, '20260930');
+  assert.equal(parseJour('samedi', now).ymd, '20261003');
+  assert.equal(parseJour('mardi', now).ymd, '20260929', 'le jour même, pas la semaine suivante');
+  assert.equal(parseJour('2026-10-12', now).ymd, '20261012');
+  assert.equal(parseJour('03/10', now).ymd, '20261003');
+  assert.match(parseJour('samedi', now).label, /samedi 3 octobre/);
+  assert.throws(() => parseJour('la semaine des quatre jeudis', now), ToolError);
+});
+
+test('fmtSec et frequences : après minuit, médiane par tranche', () => {
+  assert.equal(fmtSec(5 * 3600 + 29 * 60), '05:29');
+  assert.equal(fmtSec(25 * 3600 + 14 * 60), '01:14', 'service après minuit');
+  const pointe = Array.from({ length: 13 }, (_, i) => 7 * 3600 + i * 600); // toutes les 10 min de 7 h à 9 h
+  const f = frequences([...pointe, 12 * 3600, 12 * 3600 + 1800]);
+  assert.equal(f['pointe du matin (7 h – 9 h)'].toutes_les_min, 10);
+  assert.equal(f['pointe du matin (7 h – 9 h)'].passages, 12, '9 h 00 appartient à la tranche suivante');
+  // 9 h 00, 12 h 00, 12 h 30 : écarts 180 et 30 min → médiane haute = 180.
+  assert.equal(f['journée (9 h – 16 h)'].toutes_les_min, 180, 'médiane des écarts, pas moyenne');
+  assert.equal(f['soirée (19 h – 22 h)'], undefined, 'tranche vide absente');
+});
+
+// Horaires factices : la ligne A passe à Capitole (quais CAP) à 6 h, 6 h 10,
+// 6 h 20 les jours du motif 0 ; le motif 1 (dimanche) n'a qu'un passage.
+const day = parisToEpoch(2026, 9, 29, 10, 0);
+const schedSvc = (extra = {}) => fakeSvc({
+  now: () => day,
+  scheduleEntries: (id) => (id === 'stop_point:CAP'
+    ? [{ route_id: 'r:A', dir: '0', destination: 'Balma', perPat: { 0: [21600, 22200, 22800], 1: [36000] } }]
+    : []),
+  patternsOn: (ymd) => (ymd === '20261004' ? [1] : [0]),
+  fares: {
+    fares: [
+      { id: '1', price: 2, on_board: true, transfers: 2, duration_s: 3600 },
+      { id: '2', price: 1.8, on_board: false, transfers: 2, duration_s: 3600 },
+      { id: '3', price: 9, on_board: false, transfers: 2, duration_s: 5400 },
+    ],
+    routes: { 'r:A': ['1', '2'], 'r:14': ['1', '2', '3'] },
+  },
+  ...extra,
+}).svc;
+
+test('horaires : premier, dernier, grille compacte, autre jour', async () => {
+  const h = tool(createTools(schedSvc()), 'horaires');
+  const r = await h.handler({ arret: 'Capitole', ligne: 'A' });
+  assert.equal(r.lignes.length, 1);
+  assert.equal(r.lignes[0].premier, '06:00');
+  assert.equal(r.lignes[0].dernier, '06:20');
+  assert.equal(r.lignes[0].grille['06'], '00 10 20');
+  const dim = await h.handler({ arret: 'Capitole', ligne: 'A', jour: 'dimanche' });
+  assert.equal(dim.lignes[0].premier, '10:00');
+  const aucun = await h.handler({ arret: 'Capitole', ligne: 'L1' });
+  assert.equal(aucun.lignes.length, 0);
+  assert.match(aucun.note, /Aucun passage/);
+});
+
+test('tarifs : prix avant/à bord, le plus cher des lignes s\'applique', async () => {
+  const t = tool(createTools(schedSvc()), 'tarifs');
+  const a = await t.handler({ ligne: 'A' });
+  assert.equal(a.lignes[0].tarif.ticket, '1,80 €');
+  assert.equal(a.lignes[0].tarif.achete_a_bord, '2,00 €');
+  const q = await t.handler({ ligne: '14' });
+  assert.equal(q.lignes[0].tarif.ticket, '9,00 €');
+  await assert.rejects(tool(createTools(fakeSvc().svc), 'tarifs').handler({}), /non disponibles/);
+});
+
+// Routeur factice : la durée dépend des lignes exclues, et l'heure d'arrivée
+// de l'heure de départ — de quoi vérifier « arriver avant » et les options.
+function routedSvc({ d14 = 1200, dL1 = 1500 } = {}) {
+  const calls = [];
+  const svc = schedSvc({
+    journey: async (from, to, at, extra = {}) => {
+      calls.push({ at, exclude: [...(extra.exclude ?? [])] });
+      const ex = extra.exclude ?? new Set();
+      const [route, line, dur] = !ex.has('r:14') ? ['r:14', '14', d14] : !ex.has('r:L1') ? ['r:L1', 'L1', dL1] : [null, null, 0];
+      if (!route) return { error: 'Aucun itinéraire trouvé' };
+      return {
+        depart_at: at, arrive_at: at + dur, duration_s: dur, transfers: 0, real: false,
+        legs: [{ type: 'ride', route_id: route, line, mode: 'Bus', from: 'Jean Jaurès', from_id: 'stop_point:JJ2', to: 'Aéroport', to_id: 'stop_point:AER', depart: at, arrive: at + dur, seconds: dur, real: false }],
+      };
+    },
+  });
+  return { svc, calls };
+}
+
+test('itineraire : arriver avant une heure → départ le plus tardif qui convient', async () => {
+  // 55 min de trajet : le premier essai (départ 45 min avant) arrive EN RETARD,
+  // il faut donc corriger vers plus tôt — c'est ce cas qui compte.
+  const { svc } = routedSvc({ d14: 3300 });
+  const r = await tool(createTools(svc), 'itineraire').handler({ depart: 'Jean Jaurès', arrivee: 'Aéroport', arriver_avant: '12:00' });
+  const cible = parisToEpoch(2026, 9, 29, 12, 0);
+  const arrive = parisToEpoch(2026, 9, 29, +r.arriver_a.slice(0, 2), +r.arriver_a.slice(3));
+  assert.ok(arrive <= cible, `arrive à ${r.arriver_a}`);
+  assert.ok(cible - arrive <= 180, `pas de départ inutilement tôt (arrive à ${r.arriver_a})`);
+  assert.equal(r.arriver_avant, '12:00');
+  assert.equal(r.tarif.ticket, '9,00 €');
+});
+
+test('itineraire : options, lignes évitées toujours respectées', async () => {
+  const { svc, calls } = routedSvc();
+  const it = tool(createTools(svc), 'itineraire');
+  const r = await it.handler({ depart: 'Jean Jaurès', arrivee: 'Aéroport', heure_depart: '11:00', options: 2 });
+  assert.deepEqual(r.lignes, ['14']);
+  assert.deepEqual(r.autres_options.map((o) => o.lignes), [['L1']]);
+  const e = await it.handler({ depart: 'Jean Jaurès', arrivee: 'Aéroport', heure_depart: '11:00', eviter: '14' });
+  assert.deepEqual(e.lignes, ['L1']);
+  assert.deepEqual(e.lignes_evitees, ['14']);
+  assert.ok(calls.every((c) => !c.exclude.length || c.exclude.includes('r:14') || c.exclude.includes('r:L1')));
+  await assert.rejects(it.handler({ depart: 'Jean Jaurès', arrivee: 'Aéroport', heure_depart: '11:00', arriver_avant: '12:00' }), /pas les deux/);
+});
+
+test('itineraire : une alternative beaucoup plus longue est écartée', async () => {
+  const { svc } = routedSvc({ d14: 1200, dL1: 5000 });
+  const r = await tool(createTools(svc), 'itineraire').handler({ depart: 'Jean Jaurès', arrivee: 'Aéroport', heure_depart: '11:00', options: 3 });
+  assert.deepEqual(r.autres_options, []);
+  assert.match(r.autres_options_note, /Aucun autre/);
+});
+
+test('search / fetch : formes attendues par ChatGPT', async () => {
+  const tools = createTools(schedSvc());
+  const s = await tool(tools, 'search').handler({ query: 'Jean Jaurès' });
+  assert.ok(s.results.length >= 1);
+  for (const x of s.results) assert.ok(x.id && x.title && x.url, JSON.stringify(x));
+  const arret = s.results.find((x) => x.id.startsWith('arret:'));
+  const f = await tool(tools, 'fetch').handler({ id: arret.id });
+  assert.equal(typeof f.text, 'string');
+  assert.match(f.text, /Jean Jaurès/);
+  assert.ok(f.url && f.title && f.metadata);
+  const l = await tool(tools, 'fetch').handler({ id: 'ligne:r:A' });
+  assert.match(l.text, /premier départ 06:00/);
+  await assert.rejects(tool(tools, 'fetch').handler({ id: 'n-importe-quoi' }), /non reconnu/);
+});

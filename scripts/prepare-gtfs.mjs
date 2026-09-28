@@ -98,7 +98,12 @@ const routes = parseCsv(read('routes.txt')).map((r) => ({
 const stops = {};
 for (const s of parseCsv(read('stops.txt'))) {
   if (!s.stop_lat || !s.stop_lon) continue;
-  stops[s.stop_id] = { n: s.stop_name, lat: Number(s.stop_lat), lon: Number(s.stop_lon) };
+  const st = { n: s.stop_name, lat: Number(s.stop_lat), lon: Number(s.stop_lon) };
+  // Accessibilité en fauteuil (GTFS : 1 = accessible, 2 = non) et zone d'arrêt
+  // parente : champs courts, absents quand le GTFS ne dit rien.
+  if (s.wheelchair_boarding === '1' || s.wheelchair_boarding === '2') st.w = Number(s.wheelchair_boarding);
+  if (s.parent_station) st.p = s.parent_station;
+  stops[s.stop_id] = st;
 }
 
 // trips : trip_id -> { route_id, dir, headsign, shape_id, service_id }
@@ -253,7 +258,22 @@ for (const v of Object.values(variants)) v.sort((a, b) => a.dir.localeCompare(b.
 // redémarre pendant l'écriture ne lit jamais un fichier à moitié écrit.
 const dataDir = resolve(__dirname, '..', process.env.GTFS_OUT || 'data');
 mkdirSync(dataDir, { recursive: true });
-const out = { 'routes.json': routes, 'stops.json': stops, 'route_variants.json': variants, 'schedules.json': schedules };
+// Tarifs : fare_attributes (prix, validité, correspondances) + fare_rules
+// (quel tarif s'applique à quelle ligne). Les abonnements et tarifs réduits
+// ne sont PAS dans le GTFS.
+const fares = { fares: [], routes: {} };
+try {
+  for (const f of parseCsv(read('fare_attributes.txt'))) {
+    fares.fares.push({
+      id: f.fare_id, price: Number(f.price), currency: f.currency_type,
+      on_board: f.payment_method === '0', transfers: f.transfers === '' ? null : Number(f.transfers),
+      duration_s: f.transfer_duration ? Number(f.transfer_duration) : null,
+    });
+  }
+  for (const r of parseCsv(read('fare_rules.txt'))) if (r.route_id) (fares.routes[r.route_id] ??= []).push(r.fare_id);
+} catch (err) { console.warn('Tarifs absents du GTFS :', String(err.message || err)); }
+const meta = { format: 2, generated_at: new Date().toISOString(), from: dates[0], until: dates[dates.length - 1] };
+const out = { 'routes.json': routes, 'stops.json': stops, 'route_variants.json': variants, 'schedules.json': schedules, 'fares.json': fares, 'meta.json': meta };
 for (const [name, value] of Object.entries(out)) writeFileSync(join(dataDir, `${name}.tmp`), JSON.stringify(value), 'utf-8');
 for (const name of Object.keys(out)) renameSync(join(dataDir, `${name}.tmp`), join(dataDir, name));
 console.log(`OK — ${routes.length} lignes, ${Object.keys(stops).length} arrêts, ` +
