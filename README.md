@@ -41,6 +41,61 @@ npm start
 | `GET /api/journey?from=…&to=…` | Itinéraire A→B (nom d'arrêt, id ou `lat,lon`) |
 | `GET /api/status` | Santé : âge du flux, compteurs, véhicules recalés, erreurs amont |
 
+## Connecteur MCP (ChatGPT, Claude…)
+
+`POST /mcp` est un serveur **MCP** (transport « Streamable HTTP », sans état, sans
+compte) : un assistant peut y interroger le réseau en direct. Tout est en lecture seule.
+
+| Outil | Ce qu'il répond |
+|---|---|
+| `vehicules` | Véhicules en circulation (position estimée, destination, prochain arrêt), filtrables par ligne, mode ou **autour d'un lieu** |
+| `vehicule` | Un véhicule : arrêts restants avec heures, trace des dernières minutes |
+| `itineraire` | Trajet A → B entre **arrêts, adresses, lieux** (« gare Matabiau », « aéroport ») ou `lat,lon`, maintenant ou à une heure donnée |
+| `prochains_passages` | Départs à un arrêt (temps réel, sinon théorique — toujours le cas du métro) |
+| `arrets_proches` | Arrêts autour d'un lieu, distance à pied et prochains passages |
+| `rechercher_lieu` | Lever une ambiguïté : arrêts homonymes, adresses, lieux |
+| `lignes` / `ligne` | Liste des lignes ; parcours et perturbations d'une ligne |
+| `perturbations` | Infos trafic en texte brut, par ligne |
+| `etat_du_reseau` | Vue d'ensemble, fraîcheur des données, validité des horaires |
+
+**Brancher dans ChatGPT** : Paramètres → Applis et connecteurs → Paramètres avancés →
+*Mode développeur*, puis **Créer** : URL `https://tisseo.plagnito.com/mcp`,
+authentification **Aucune**. Dans Claude : Paramètres → Connecteurs → *Ajouter un
+connecteur personnalisé*, même URL.
+
+Ce qui rend les réponses fiables pour un modèle de langage :
+- heures en clair (fuseau de Paris) + « dans N min », jamais d'epoch seul ;
+- chaque lieu dit comment il a été **compris** (`interprete_comme`) : arrêt, adresse, lieu ;
+- **homonymes** : « Jean Jaurès » existe à trois endroits ; on prend le plus desservi
+  (la station de métro) et on nomme les autres ;
+- une adresse n'est retenue que si un arrêt Tisséo est à moins de 1,5 km : c'est ce qui
+  écarte « 12 rue Alsace-Lorraine » à **Lavaur**, que le géocodeur classe en premier ;
+- l'itinéraire écarte les lignes **hors service** à l'heure demandée (amplitude des
+  horaires théoriques) et attend le prochain passage théorique quand le temps réel manque.
+
+Géocodage : [Géoplateforme IGN](https://geoservices.ign.fr/documentation/services/services-geoplateforme/geocodage)
+(sans clé) — seul le texte du lieu y est envoyé. Garde-fou : 120 appels / min / IP.
+
+```powershell
+node scripts/verifier-mcp.mjs                          # serveur local (3127)
+node scripts/verifier-mcp.mjs https://tisseo.plagnito.com/mcp
+```
+
+## Déploiement (Raspberry Pi)
+
+Dépôt `Plagnito/tisseo-live` (privé), publié depuis ce dossier du monodépôt `D:\Claude` :
+
+```powershell
+git subtree push --prefix=SideApps/Tisseo tisseo main   # remote tisseo = git@github.com:Plagnito/tisseo-live.git
+```
+
+Sur le Pi, `updater/supervisor.cjs` (service `tisseo-live`, voir
+`updater/tisseo-live.service`) tire `main` toutes les 15 min, réinstalle, redémarre, et
+revient à la version précédente si `/api/health` ne répond pas. Il **rafraîchit aussi le
+GTFS** dans `data-live/` (hors git) : les horaires théoriques ne couvrent qu'environ un
+mois, et sans ça le métro perdrait ses horaires le jour où la fenêtre expire.
+`/api/status` donne `schedules_until`.
+
 ## La carte, et ce qui se passe quand elle n'y est plus
 
 Le fond de carte n'est jamais posé à l'aveugle. Le serveur **sonde** chaque

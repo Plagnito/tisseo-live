@@ -1,0 +1,41 @@
+# Service systemd de Tisséo Live sur le Raspberry Pi (superviseur + mise à jour auto).
+#
+# Installation (déjà faite le 28/09/2026, gardée pour la prochaine fois) :
+#   1. Clé de déploiement en lecture seule, alias SSH `github-tisseo` dans
+#      ~plagnito/.ssh/config, puis clone EN SSH (en HTTPS l'app tourne mais ne se
+#      met plus jamais à jour, sans rien dire — leçon d'Atlas Coffre) :
+#        git clone git@github-tisseo:Plagnito/tisseo-live.git ~/Documents/tisseo-live
+#   2. npm install --omit=dev
+#   3. sudo cp updater/tisseo-live.service /etc/systemd/system/
+#      sudo systemctl daemon-reload && sudo systemctl enable --now tisseo-live
+#   4. Tunnel Cloudflare (géré depuis le tableau de bord, config.yml ignoré) :
+#      nom d'hôte public tisseo.plagnito.com → http://localhost:3127
+#
+# Suivi :  systemctl status tisseo-live · tail -f updater/supervisor.log
+#          curl -s localhost:3127/api/status
+
+[Unit]
+Description=Tisséo Live — carte et connecteur MCP du réseau toulousain (superviseur auto-update)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/plagnito/Documents/tisseo-live
+# L'utilisateur qui POSSÈDE la clé de déploiement : le superviseur fait un
+# `git fetch` avec SON identité SSH.
+User=plagnito
+# Node 22 de nvm par un lien STABLE (le chemin nvm contient la version), le même
+# que celui d'Atlas Coffre. Le node système (v20) fait tourner le bot Atlas : on
+# n'y touche pas. PATH complet : `npm install` doit trouver le npm de ce node.
+Environment=PATH=/usr/local/node-coffre/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PORT=3127
+ExecStart=/usr/local/node-coffre/bin/node updater/supervisor.cjs
+Restart=always
+RestartSec=5
+# Le superviseur engendre le serveur : lui seul reçoit SIGTERM et fait le ménage.
+KillMode=mixed
+TimeoutStopSec=20
+
+[Install]
+WantedBy=multi-user.target

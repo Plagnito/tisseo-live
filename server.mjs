@@ -20,15 +20,22 @@
 // ---------------------------------------------------------------
 import express from 'express';
 import cors from 'cors';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { gzipSync } from 'node:zlib';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createModel, haversineM, GRACE_S } from './lib/core.mjs';
 import { createRouter } from './lib/router.mjs';
-import { loadSchedules, scheduleDepartures, mergeDepartures } from './lib/schedules.mjs';
+import { loadSchedules, scheduleDepartures, mergeDepartures, routeActiveAt } from './lib/schedules.mjs';
 import { buildNetwork } from './lib/network.mjs';
 import { createTileProbe } from './lib/tiles.mjs';
+import { createMcpServer } from './lib/mcp.mjs';
+import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
+
+// Les horaires théoriques (lib/schedules.mjs) raisonnent en heure LOCALE :
+// sur un serveur réglé en UTC (Raspberry Pi, conteneur), tout serait décalé
+// d'une à deux heures. Toulouse, quelle que soit la machine.
+process.env.TZ = process.env.TISSEO_TZ || 'Europe/Paris';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 3127;
@@ -38,9 +45,17 @@ const RT_TIMEOUT_MS = 8_000; // on ne bloque jamais une requête client 30 s
 const HISTORY_MAX = 150; // ~25 min de traînée à 10 s par véhicule
 const HISTORY_TTL_S = 45 * 60;
 
-const routes = JSON.parse(readFileSync(join(__dirname, 'data', 'routes.json'), 'utf-8'));
-const stops = JSON.parse(readFileSync(join(__dirname, 'data', 'stops.json'), 'utf-8'));
-const variants = JSON.parse(readFileSync(join(__dirname, 'data', 'route_variants.json'), 'utf-8'));
+// Données GTFS : data-live/ (rafraîchi sur le serveur par le superviseur,
+// hors git) quand il est complet, sinon data/ (versionné). Les horaires
+// théoriques ont une date de fin : sans rafraîchissement, le métro perdrait
+// ses horaires en silence le jour où la fenêtre publiée expire.
+const DATA_FILES = ['routes.json', 'stops.json', 'route_variants.json', 'schedules.json'];
+const DATA_DIR = DATA_FILES.every((f) => existsSync(join(__dirname, 'data-live', f))) ? 'data-live' : 'data';
+const readData = (f) => JSON.parse(readFileSync(join(__dirname, DATA_DIR, f), 'utf-8'));
+console.log(`Donnees GTFS : ${DATA_DIR}/`);
+const routes = readData('routes.json');
+const stops = readData('stops.json');
+const variants = readData('route_variants.json');
 
 const model = createModel({ routes, stops, variants });
 const { routeById, modeOf, computeSnapshot, collectDepartures, searchStops } = model;
@@ -51,13 +66,17 @@ const router = createRouter({ stops, variants, routes });
 let schedules = null;
 try {
   schedules = loadSchedules(
-    JSON.parse(readFileSync(join(__dirname, 'data', 'schedules.json'), 'utf-8')),
+    readData('schedules.json'),
     { routeById, modeOf },
   );
   console.log(`Horaires theoriques : ${schedules.entries} couples arret/ligne, ${schedules.patterns} motifs de dates.`);
 } catch (err) {
   console.warn('Pas de repli horaire (data/schedules.json) :', String(err.message || err));
 }
+
+// Dernier jour couvert par les horaires théoriques ("YYYYMMDD"), ou null.
+const scheduleUntil = schedules ? [...schedules.patternsByDate.keys()].sort().pop() ?? null : null;
+if (scheduleUntil) console.log(`Horaires theoriques valables jusqu'au ${scheduleUntil}.`);
 
 // Géométrie de toutes les lignes, calculée une fois au démarrage : c'est le
 // fond vectoriel de secours quand aucune tuile de carte n'est chargeable.
@@ -124,12 +143,19 @@ function recordHistory(snap) {
 }
 
 let computed = null; // { rtTimestamp, snap, departures }
+const ALERTS_HOLD_MS = 15 * 60_000;
+let lastAlerts = { list: [], at: 0 };
 async function getComputed() {
   const rt = await fetchRealtime();
   const ts = rt?.header?.timestamp ?? 0;
   router.setFeed(rt);
   if (!computed || computed.rtTimestamp !== ts) {
     const snap = computeSnapshot(rt);
+    // Le flux publie parfois une mise à jour SANS aucune alerte, puis les
+    // retrouve la suivante (vu le 28/09 : 52 → 0 → 52 en une minute). Un
+    // « aucune perturbation » faux est pire qu'une alerte vieille de 10 min.
+    if (snap.alerts.length) lastAlerts = { list: snap.alerts, at: Date.now() };
+    else if (lastAlerts.list.length && Date.now() - lastAlerts.at < ALERTS_HOLD_MS) snap.alerts = lastAlerts.list;
     const departures = collectDepartures(rt, ts);
     recordHistory(snap);
     computed = { rtTimestamp: ts, snap, departures };
@@ -313,6 +339,25 @@ function buildDepartures(id, c, nowSec, radiusM = 150) {
   return { group, rt, gtfs };
 }
 
+// Passages fusionnés (RT + théorique) d'un arrêt ; un quai isolé (aucun
+// voisin avec service) élargit une fois le rayon de regroupement.
+function departuresAt(id, c, nowSec, n = 12) {
+  let r = buildDepartures(id, c, nowSec);
+  if (!r.rt.length && !r.gtfs.length) r = buildDepartures(id, c, nowSec, 300);
+  return { points: r.group.length, departures: mergeDepartures(r.rt, r.gtfs, n) };
+}
+
+// Les n stop_points les plus proches d'un point, avec la distance.
+function nearestStopPoints(lat, lon, n) {
+  const scored = [];
+  for (const [id, s] of Object.entries(stops)) {
+    if (!id.startsWith('stop_point:')) continue;
+    scored.push({ id, name: s.n, lat: s.lat, lon: s.lon, dist_m: Math.round(haversineM(lat, lon, s.lat, s.lon)) });
+  }
+  scored.sort((a, b) => a.dist_m - b.dist_m);
+  return scored.slice(0, n);
+}
+
 app.get('/api/departures', ah(async (req, res) => {
   const ids = stopIdList(req.query.stop_id);
   if (!ids.length) return res.status(400).json({ error: 'stop_id invalide' });
@@ -325,12 +370,10 @@ app.get('/api/departures', ah(async (req, res) => {
   const nowSec = Math.floor(Date.now() / 1000);
   const out = ids.filter((id) => stops[id]).map((id) => {
     const s = stops[id];
-    let r = buildDepartures(id, c, nowSec);
-    // Quai isolé (aucun voisin avec service) : on élargit une fois.
-    if (!r.rt.length && !r.gtfs.length) r = buildDepartures(id, c, nowSec, 300);
+    const r = departuresAt(id, c, nowSec, 12);
     return {
-      stop: { id, name: s.n, lat: s.lat, lon: s.lon, points: r.group.length },
-      departures: mergeDepartures(r.rt, r.gtfs, 12),
+      stop: { id, name: s.n, lat: s.lat, lon: s.lon, points: r.points },
+      departures: r.departures,
     };
   });
   res.json({
@@ -354,13 +397,7 @@ app.get('/api/nearby', ah(async (req, res) => {
     return res.status(502).json({ error: 'Flux temps réel Tisséo injoignable', detail: c.rtError });
   }
   const nowSec = Math.floor(Date.now() / 1000);
-  const scored = [];
-  for (const [id, s] of Object.entries(stops)) {
-    if (!id.startsWith('stop_point:')) continue;
-    scored.push({ id, name: s.n, lat: s.lat, lon: s.lon, dist_m: Math.round(haversineM(lat, lon, s.lat, s.lon)) });
-  }
-  scored.sort((a, b) => a.dist_m - b.dist_m);
-  const top = scored.slice(0, n).map((s) => {
+  const top = nearestStopPoints(lat, lon, n).map((s) => {
     const g = buildDepartures(s.id, c, nowSec);
     return { ...s, departures: mergeDepartures(g.rt, g.gtfs, 3) };
   });
@@ -415,7 +452,7 @@ app.get('/api/journey', ah(async (req, res) => {
   // estimations horaires (real:false). Pas de 502 pour un trajet.
   try { await getComputed(); } catch { /* feed indisponible */ }
   const at = Number(req.query.at) || Math.floor(Date.now() / 1000);
-  const out = router.journey(from, to, at);
+  const out = router.journey(from, to, at, journeyOpts);
   if (out.error) return res.status(422).json({ ...out, from: from.label, to: to.label });
   res.json(out);
 }));
@@ -432,11 +469,114 @@ app.get('/api/status', ah(async (req, res) => {
     active_routes: Object.keys(c.snap.perRoute).length,
     alerts: c.snap.alerts.length,
     tracked_vehicles: history.size,
+    data_dir: DATA_DIR,
+    schedules_until: scheduleUntil,
     stale: c.stale || undefined,
     upstream_error: cache.error || undefined,
     grace_s: GRACE_S,
   });
 }));
+
+// --- Connecteur MCP (ChatGPT, Claude…) ---------------------------------
+// Prochain départ THÉORIQUE d'une ligne à un arrêt, dans le sens qui va de
+// board à alight : c'est ce qui donne un temps d'attente aux étapes que le
+// temps réel ne couvre pas (métro, creux du flux).
+function nextDeparture(routeId, board, alight, t) {
+  if (!schedules) return null;
+  const v = (variants[routeId] ?? []).find((x) => {
+    const i = x.stops.indexOf(board);
+    return i >= 0 && x.stops.indexOf(alight) > i;
+  });
+  const d = scheduleDepartures(schedules, board, t, 80)
+    .find((x) => x.route_id === routeId && (!v || x.dir === v.dir));
+  return d ? d.time : null;
+}
+
+// Ligne en service à l'heure t ? Horaires théoriques, et — pour un départ
+// proche de maintenant — la présence de véhicules dans le flux temps réel.
+// null = on ne sait pas (la ligne n'est alors pas écartée).
+function inService(routeId, t) {
+  const nowish = Math.abs(t - Date.now() / 1000) < 30 * 60;
+  if (nowish && computed?.snap?.perRoute?.[routeId]) return true;
+  return routeActiveAt(schedules, routeId, t);
+}
+const journeyOpts = { nextDeparture, inService };
+
+// Géocodage d'adresses et de lieux (IGN Géoplateforme, sans clé), biaisé
+// vers Toulouse. Cache mémoire : un même lieu revient souvent.
+const GEOCODE_URL = 'https://data.geopf.fr/geocodage/search';
+const geoCache = new Map();
+async function geocode(q) {
+  const key = String(q).trim().toLowerCase();
+  const hit = geoCache.get(key);
+  if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.list;
+  const url = `${GEOCODE_URL}?${new URLSearchParams({ q: key.slice(0, 200), index: 'address,poi', limit: '6', lat: '43.6045', lon: '1.4442' })}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'TisseoLive/1.0 (plagnito.com)' } });
+  if (!res.ok) throw new Error(`géocodeur HTTP ${res.status}`);
+  const json = await res.json();
+  const list = (json.features ?? [])
+    .filter((f) => (f.properties?.score ?? 0) >= 0.45)
+    .map((f) => {
+      const p = f.properties;
+      const city = Array.isArray(p.city) ? p.city[0] : p.city;
+      return {
+        label: p._type === 'poi' ? `${p.toponym ?? [].concat(p.name)[0]}${city ? `, ${city}` : ''}` : p.label,
+        type: p._type === 'poi' ? 'poi' : 'address',
+        lat: f.geometry.coordinates[1],
+        lon: f.geometry.coordinates[0],
+        score: p.score,
+      };
+    });
+  if (geoCache.size > 1000) geoCache.delete(geoCache.keys().next().value);
+  geoCache.set(key, { at: Date.now(), list });
+  return list;
+}
+
+const mcp = createMcpServer({
+  name: 'tisseo-live',
+  title: 'Tisséo Live',
+  version: '1.0.0',
+  instructions: INSTRUCTIONS,
+  tools: createTools({
+    routes, stops, variants, routeById, modeOf, searchStops,
+    live: getComputed,
+    liveOrNull: computedOrNull,
+    departuresAt: (id, c, nowSec, n) => departuresAt(id, c, nowSec, n).departures,
+    nearestStopPoints,
+    journey: async (from, to, at) => {
+      try { await getComputed(); } catch { /* sans RT : horaires théoriques */ }
+      return router.journey(from, to, at, journeyOpts);
+    },
+    track: (routeId, id) => history.get(`${routeId}|${id}`),
+    scheduleUntil: () => scheduleUntil,
+    geocode,
+  }),
+});
+
+// Garde-fou : l'URL est publique et sans compte. 120 appels / min / IP
+// couvrent largement une conversation, pas un aspirateur.
+const MCP_RATE = { windowMs: 60_000, max: 120 };
+const mcpHits = new Map();
+function mcpRateLimit(req, res, next) {
+  const ip = req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
+  const t = Date.now();
+  let e = mcpHits.get(ip);
+  if (!e || t - e.start > MCP_RATE.windowMs) { e = { start: t, n: 0 }; mcpHits.set(ip, e); }
+  if (++e.n > MCP_RATE.max) {
+    res.set('Retry-After', String(Math.ceil((e.start + MCP_RATE.windowMs - t) / 1000)));
+    return res.status(429).json({ jsonrpc: '2.0', id: req.body?.id ?? null, error: { code: -32000, message: 'Trop de requêtes : réessayez dans une minute.' } });
+  }
+  if (mcpHits.size > 5000) for (const [k, v] of mcpHits) if (t - v.start > MCP_RATE.windowMs) mcpHits.delete(k);
+  next();
+}
+const mcpJson = express.json({ limit: '256kb' });
+app.all('/mcp', mcpRateLimit, (req, res, next) => {
+  if (req.method !== 'POST') return next();
+  mcpJson(req, res, (err) => {
+    if (err) return res.status(400).json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'JSON invalide' } });
+    next();
+  });
+}, ah(mcp.httpHandler));
 
 // 404 API + gestionnaire d'erreurs central (aucune pile affichée au client).
 app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue' }));
@@ -446,7 +586,9 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Erreur interne', detail: String(err?.message || err) });
 });
 
-const server = app.listen(PORT, () => {
+// HOST=127.0.0.1 sur le Pi : seul cloudflared (local) doit pouvoir joindre le
+// serveur. Par défaut toutes les interfaces, comme avant (test sur le LAN).
+const server = app.listen(PORT, process.env.HOST || undefined, () => {
   console.log(`Tisseo Live : http://localhost:${PORT}`);
   console.log(`Routes : ${routes.length} | Arrets : ${Object.keys(stops).length} | Lignes tracees : ${Object.keys(variants).length}`);
 });

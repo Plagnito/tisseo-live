@@ -7,13 +7,16 @@
     "start": "node server.mjs",
     "prepare-gtfs": "node scripts/prepare-gtfs.mjs",
     "test": "node --test \"test/*.test.mjs\"",
-    "test:e2e": "node test/e2e.mjs"
+    "test:e2e": "node test/e2e.mjs",
+    "verifier-mcp": "node scripts/verifier-mcp.mjs",
+    "supervised": "node updater/supervisor.cjs"
   },
   "dependencies": {
     "cors": "^2.8.5",
-    "express": "^4.19.2"
-  },
-  "devDependencies": {
+    "express": "^4.19.2",
     "adm-zip": "^0.5.16"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

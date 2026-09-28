@@ -8,8 +8,8 @@
 //                              "prochains passages" quand le GTFS-RT ne
 //                              couvre pas la ligne (métro) ou qu'il a un creux.
 // Usage : npm run prepare-gtfs   (nécessite adm-zip en devDependency)
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { writeFileSync, mkdirSync, renameSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import AdmZip from 'adm-zip';
 
@@ -66,8 +66,22 @@ function simplify(points, tol = 0.00012) {
   return points.filter((_, i) => keep[i]);
 }
 
+// Le lien ci-dessus désigne UN fichier (son identifiant change quand Tisséo
+// publie une nouvelle version) : on demande d'abord au catalogue open data le
+// fichier GTFS courant, le lien figé ne sert que de secours.
+const CATALOGUE_URL = 'https://data.toulouse-metropole.fr/api/explore/v2.1/catalog/datasets/tisseo-gtfs/records?limit=20';
+async function currentGtfsUrl() {
+  try {
+    const r = await fetch(CATALOGUE_URL, { signal: AbortSignal.timeout(20_000) });
+    const j = await r.json();
+    const f = (j.results ?? []).map((x) => x.file).find((x) => /gtfs/i.test(x?.filename ?? '') && x.url);
+    if (f) return f.url;
+  } catch (err) { console.warn('Catalogue injoignable, lien de secours :', String(err.message || err)); }
+  return GTFS_URL;
+}
+
 console.log('Téléchargement du GTFS Tisséo…');
-const res = await fetch(GTFS_URL);
+const res = await fetch(await currentGtfsUrl(), { signal: AbortSignal.timeout(180_000) });
 if (!res.ok) throw new Error(`GTFS HTTP ${res.status}`);
 const zip = new AdmZip(Buffer.from(await res.arrayBuffer()));
 const read = (n) => zip.readAsText(n);
@@ -234,12 +248,14 @@ for (const [key, w] of winners) {
 }
 for (const v of Object.values(variants)) v.sort((a, b) => a.dir.localeCompare(b.dir));
 
-const dataDir = join(__dirname, '..', 'data');
+// GTFS_OUT=data-live : dossier hors git, rafraîchi sur le serveur (voir
+// updater/supervisor.cjs). Écriture en .tmp puis renommage : un serveur qui
+// redémarre pendant l'écriture ne lit jamais un fichier à moitié écrit.
+const dataDir = resolve(__dirname, '..', process.env.GTFS_OUT || 'data');
 mkdirSync(dataDir, { recursive: true });
-writeFileSync(join(dataDir, 'routes.json'), JSON.stringify(routes), 'utf-8');
-writeFileSync(join(dataDir, 'stops.json'), JSON.stringify(stops), 'utf-8');
-writeFileSync(join(dataDir, 'route_variants.json'), JSON.stringify(variants), 'utf-8');
-writeFileSync(join(dataDir, 'schedules.json'), JSON.stringify(schedules), 'utf-8');
+const out = { 'routes.json': routes, 'stops.json': stops, 'route_variants.json': variants, 'schedules.json': schedules };
+for (const [name, value] of Object.entries(out)) writeFileSync(join(dataDir, `${name}.tmp`), JSON.stringify(value), 'utf-8');
+for (const name of Object.keys(out)) renameSync(join(dataDir, `${name}.tmp`), join(dataDir, name));
 console.log(`OK — ${routes.length} lignes, ${Object.keys(stops).length} arrêts, ` +
   `${Object.keys(variants).length} lignes avec tracé (${nbShapes} pts, ${nbStops} arrêts).`);
 console.log(`Horaires : ${Object.keys(lines).length} lignes, ${schedEntries} passages théoriques, ` +

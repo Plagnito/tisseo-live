@@ -2,3 +2,7 @@ node_modules/
 npm-debug.log
 server.out.log
 server.err.log
+data-live/
+.env
+updater/state.json
+updater/supervisor.log*
