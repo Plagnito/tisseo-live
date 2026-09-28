@@ -19,12 +19,29 @@ const state = {
   favDeps: new Map(), // stop_id -> départs (favoris)
   nearby: null, // { lat, lon, stops: [...] }
   routeDetail: new Map(), // route_id -> { variants }
+  selVeh: null, // { key, routeId, variant, stops, track }
+  follow: false, // la carte suit le véhicule sélectionné
+  baseId: null, // fournisseur de fond de carte courant
+  listView: null, // 'lignes' | 'vehicules' : panneau liste ouvert
   favs: new Set(readJson('tisseo.live.favs', [])),
   dark: true,
   countdown: REFRESH_S,
 };
 
 const $ = (id) => document.getElementById(id);
+// Écrit dans le DOM seulement si le contenu a changé. Sans ça, le
+// rafraîchissement toutes les 15 s détruit et recrée des dizaines de listes
+// (alertes, lignes, fiche véhicule) alors que leur contenu est identique :
+// le navigateur resélectionne, rescrolle et repeint tout pour rien.
+function setHtml(el, html) {
+  if (el.__last === html) return false;
+  const keep = el.querySelector('.steps');
+  const scroll = keep ? keep.scrollTop : 0;
+  el.innerHTML = html;
+  if (keep && scroll) { const s = el.querySelector('.steps'); if (s) s.scrollTop = scroll; }
+  el.__last = html;
+  return true;
+}
 const norm = (s) => (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 const modeKey = (m) => norm(m);
 const vKey = (v) => `${v.route_id}|${v.id}`;
@@ -89,11 +106,45 @@ function setBaseLayer() {
   const list = providerList();
   if (baseIdx >= list.length) baseIdx = 0;
   const p = list[baseIdx];
-  baseLayer = L.tileLayer(p.url, { maxZoom: 19, attribution: p.attribution || '' });
+  // maxNativeZoom : au-delà, Leaflet agrandit la dernière tuile native au
+  // lieu d'en demander une de plus. Sans ça, le fond gris foncé d'Esri
+  // servait son « map data not available » à partir du z17 — le z17 et le
+  // z18 renvoyant le même fichier.
+  baseLayer = L.tileLayer(p.url, {
+    maxZoom: 21,
+    maxNativeZoom: p.max_native_zoom ?? 19,
+    attribution: p.attribution || '',
+  });
   baseLayer.on('tileerror', onTileError);
   baseLayer.addTo(map);
-  if (p.labels) { labelLayer = L.tileLayer(p.labels, { maxZoom: 19 }); labelLayer.addTo(map); }
+  if (p.labels) {
+    labelLayer = L.tileLayer(p.labels, { maxZoom: 21, maxNativeZoom: p.max_native_zoom ?? 19 });
+    labelLayer.addTo(map);
+  }
   state.dark = p.mode !== 'light';
+  state.baseId = p.id;
+}
+
+// Au-delà du zoom natif du fond courant, on préfère un fournisseur qui a de
+// vraies données à ce niveau — un fond clair net vaut mieux qu'un fond sombre
+// agrandi jusqu'au pixel. Le choix est mémorisé pour revenir au fond
+// d'origine quand on dézoome.
+let deepProvider = null;
+function adaptProviderToZoom() {
+  if (vectorOnly || !baseLayer) return;
+  const z = map.getZoom();
+  const list = providerList();
+  const cur = list[baseIdx];
+  if (!cur || (cur.max_native_zoom ?? 19) >= z) {
+    if (deepProvider) { const back = deepProvider; deepProvider = null; baseIdx = back; setBaseLayer(); }
+    return;
+  }
+  const better = list.findIndex((p, i) => i !== baseIdx && (p.max_native_zoom ?? 19) >= z);
+  if (better < 0) return;
+  deepProvider = baseIdx;
+  baseIdx = better;
+  setBaseLayer();
+  toast('Fond de carte remplacé par ' + list[baseIdx].label + ' (le précédent s\'arrête au zoom ' + (cur.max_native_zoom ?? 19) + ').');
 }
 
 // Toutes les tuiles ont échoué (adblocker, VPN, hors ligne) : on ne laisse
@@ -160,9 +211,18 @@ const netLayer = L.layerGroup().addTo(map);
 const netLines = [];
 let netLoaded = false, netLoading = null;
 const shapeLayer = L.layerGroup().addTo(map); // tracés + arrêts de la ligne sélectionnée
+const vehLayer = L.layerGroup().addTo(map); // itinéraire + traînée du véhicule sélectionné
 const geoLayer = L.layerGroup().addTo(map); // position utilisateur
 const stopLayer = L.layerGroup().addTo(map); // arrêt sélectionné (recherche / favoris)
 const markers = new Map();
+
+// La pastille du véhicule sélectionné vit à part, hors du groupe de clusters :
+// sinon un bus qui passe près d'un autre disparaît dans une bulle et on ne
+// sait plus lequel on regarde. Panneau au-dessus, jamais regroupé.
+const selPane = map.createPane('selPane');
+selPane.style.zIndex = 650;
+const selLayer = L.layerGroup().addTo(map);
+let selMarker = null;
 
 function netStyle(line, zoomBoost = 0) {
   const isSel = state.filterLine === line.route_id;
@@ -228,6 +288,7 @@ legend.onAdd = function () {
   const d = L.DomUtil.create('div', 'legend');
   d.innerHTML = `<b>En circulation</b> <span class="pill mini" style="--c:#37c978;--tc:#fff">L1</span> ` +
     `<b>À l'arrêt</b> <span class="pill mini at_stop" style="--c:#f5a524;--tc:#fff">L1</span> ` +
+    `<b>Théorique</b> <span class="pill mini theo" style="--c:#7b61ff;--tc:#fff">A</span> ` +
     `<b>Arrêt</b> <span class="stopdot"></span>`;
   return d;
 };
@@ -252,6 +313,9 @@ async function loadAll() {
     if (state.selectedStop) await loadDepartures(state.selectedStop.id, true);
     if (state.stopFavs.length) await loadFavStops();
     if (state.nearby) await loadNearby(state.nearby.lat, state.nearby.lon, true);
+    // L'itinéraire affiché suit le véhicule : il doit être redessiné avec les
+    // nouvelles positions, sinon la traînée reste figée.
+    if (state.selectedId) await loadVehicleItinerary();
     renderAll(vehRes.stale);
   } catch (err) {
     showError('Données temps réel injoignables (' + err.message + '). Nouvel essai dans ' + REFRESH_S + ' s…');
@@ -317,20 +381,26 @@ searchStopsApi._t = 0;
 
 function renderStopResults() {
   const ul = $('stopResults');
-  if (!state.stopResults.length) { ul.innerHTML = ''; ul.classList.add('hidden'); return; }
-  ul.innerHTML = '';
+  if (!state.stopResults.length) { setHtml(ul, ''); ul.classList.add('hidden'); return; }
+  let html = '';
   for (const s of state.stopResults) {
     const fav = isStopFav(s.id);
-    const li = document.createElement('li');
-    li.className = 'line-item' + (state.selectedStop?.id === s.id ? ' sel' : '');
-    li.innerHTML = `<span class="stopdot"></span><span class="stopname">${escapeHtml(s.name)}</span>` +
-      `<button class="fav ${fav ? 'on' : ''}" data-fav title="Arrêt favori">${fav ? '★' : '☆'}</button>`;
-    li.querySelector('[data-fav]').onclick = (e) => { e.stopPropagation(); toggleStopFav(s); };
-    li.onclick = () => focusStop(s);
-    ul.appendChild(li);
+    html += `<li class="line-item${state.selectedStop?.id === s.id ? ' sel' : ''}" data-stop="${escapeHtml(s.id)}">` +
+      `<span class="stopdot"></span><span class="stopname">${escapeHtml(s.name)}</span>` +
+      `<button class="fav ${fav ? 'on' : ''}" data-fav title="Arrêt favori">${fav ? '★' : '☆'}</button></li>`;
   }
+  setHtml(ul, html);
   ul.classList.remove('hidden');
 }
+
+$('stopResults').addEventListener('click', (e) => {
+  const li = e.target.closest('li[data-stop]');
+  if (!li) return;
+  const s = state.stopResults.find((x) => x.id === li.dataset.stop);
+  if (!s) return;
+  if (e.target.closest('[data-fav]')) { e.stopPropagation(); toggleStopFav(s); }
+  else focusStop(s);
+});
 
 // Ouvre un arrêt : repère sur la carte + prochains passages.
 function focusStop(s) {
@@ -375,22 +445,29 @@ async function loadFavStops() {
 }
 
 function renderFavStops() {
-  const ul = $('favStopList');
   $('favStopsCount').textContent = `(${state.stopFavs.length})`;
-  ul.innerHTML = '';
-  ul.style.display = state.stopFavs.length ? '' : 'none';
+  $('favStopList').style.display = state.stopFavs.length ? '' : 'none';
+  let html = '';
   for (const s of state.stopFavs) {
-    const li = document.createElement('li');
-    li.className = 'favstop' + (state.selectedStop?.id === s.id ? ' sel' : '');
     const deps = state.favDeps.get(s.id) || [];
-    li.innerHTML = `<div class="stopbody"><b>${escapeHtml(s.name)}</b>` +
+    html += `<li class="favstop${state.selectedStop?.id === s.id ? ' sel' : ''}" data-stop="${escapeHtml(s.id)}">` +
+      `<div class="stopbody"><b>${escapeHtml(s.name)}</b>` +
       (deps.length ? deps.slice(0, 3).map(depHtml).join('') : '<div class="nodep">chargement…</div>') + '</div>' +
-      `<button class="fav on" data-unfav title="Retirer des favoris">★</button>`;
-    li.querySelector('[data-unfav]').onclick = (e) => { e.stopPropagation(); toggleStopFav(s); };
-    li.onclick = () => focusStop(s);
-    ul.appendChild(li);
+      `<button class="fav on" data-unfav title="Retirer des favoris">★</button></li>`;
   }
+  setHtml($('favStopList'), html);
 }
+
+// Délégation sur la liste des arrêts favoris (les horaires changent souvent :
+// c'est le rendu le plus fréquent de la page).
+$('favStopList').addEventListener('click', (e) => {
+  const li = e.target.closest('li[data-stop]');
+  if (!li) return;
+  const s = state.stopFavs.find((x) => x.id === li.dataset.stop);
+  if (!s) return;
+  if (e.target.closest('[data-unfav]')) { e.stopPropagation(); toggleStopFav(s); }
+  else focusStop(s);
+});
 
 function showError(msg, withBadge = true) {
   const el = $('error');
@@ -429,6 +506,96 @@ function visibleVehicles() {
 }
 
 // ---------- rendu ----------
+// ---------- inventaire : toutes les lignes / tous les véhicules ----------
+// Deux vues câblées sur les compteurs de l'en-tête et sur le bouton
+// « Toutes les lignes » du panneau. Elles listent ce qui roule MAINTENANT,
+// avec la position de chaque véhicule : c'est l'inverse de la carte, qui
+// montre où mais cache combien.
+const INVENTORY_PAGE = 80;
+
+function openInventory(kind, routeId) {
+  state.listView = { kind, routeId: routeId ?? null };
+  $('statVehiclesBtn').classList.toggle('on', kind === 'vehicules');
+  $('statLinesBtn').classList.toggle('on', kind === 'lignes');
+  renderInventory();
+}
+
+function closeInventory() {
+  state.listView = null;
+  $('inventory').classList.add('hidden');
+  $('statVehiclesBtn').classList.remove('on');
+  $('statLinesBtn').classList.remove('on');
+}
+
+function vehicleRowHtml(v) {
+  const speed = v.speed_kmh != null ? Math.round(v.speed_kmh) + ' km/h' : '';
+  return `<li class="inv" data-veh="${escapeHtml(vKey(v))}">` +
+    `<span class="past" style="background:#${v.color}"></span>` +
+    `<b>${escapeHtml(v.line)}</b>` +
+    `<span class="dest">→ ${escapeHtml(v.destination || '')}</span>` +
+    `<small>${v.theoretical ? 'théorique · ' : ''}${escapeHtml(v.next_stop || v.at_stop || '')}</small>` +
+    `<span class="pos" title="Position estimée">${v.lat.toFixed(5)}, ${v.lon.toFixed(5)}</span>` +
+    `<span class="spd">${speed}</span></li>`;
+}
+
+function renderInventory() {
+  const box = $('inventory');
+  const view = state.listView;
+  if (!view) { box.classList.add('hidden'); return; }
+  const vis = visibleVehicles();
+  let items = vis;
+  let title = '';
+  if (view.kind === 'lignes') {
+    if (view.routeId) {
+      items = vis.filter((v) => v.route_id === view.routeId);
+      const r = routeById.get(view.routeId);
+      title = `Ligne ${r?.short_name ?? view.routeId} — ${items.length} véhicule${items.length > 1 ? 's' : ''}`;
+    } else {
+      // Toutes les lignes confondues, triées par ligne puis par destination.
+      items = [...vis].sort((a, b) => a.line.localeCompare(b.line, 'fr') || a.destination.localeCompare(b.destination, 'fr'));
+      const lines = new Set(vis.map((v) => v.route_id));
+      title = `Toutes les lignes — ${lines.size} ligne${lines.size > 1 ? 's' : ''}, ${vis.length} véhicules`;
+    }
+  } else {
+    items = [...vis].sort((a, b) => a.route_id.localeCompare(b.route_id) || a.line.localeCompare(b.line, 'fr'));
+    title = `${vis.length} véhicule${vis.length > 1 ? 's' : ''} en service`;
+  }
+  const shown = items.slice(0, INVENTORY_PAGE);
+  const byMode = {};
+  for (const v of vis) byMode[v.mode] = (byMode[v.mode] || 0) + 1;
+  const resume = Object.entries(byMode).map(([m, n]) => `<span class="tagline">${escapeHtml(m)} <b>${n}</b></span>`).join('');
+
+  setHtml(box, `<button class="close" id="invClose" title="Fermer">✕</button>` +
+    `<h3>${escapeHtml(title)}</h3><div class="invtags">${resume}</div>` +
+    `<ul class="invlist">${shown.map(vehicleRowHtml).join('')}</ul>` +
+    (items.length > shown.length
+      ? `<div class="invmore">… et ${items.length - shown.length} autres (affinez avec les filtres à gauche).</div>`
+      : ''));
+  box.classList.remove('hidden');
+  $('invClose').onclick = () => closeInventory();
+  $('inventory').scrollTop = 0;
+}
+
+// Délégation : cliquer une ligne de l'inventaire sélectionne le véhicule,
+// avec son itinéraire. C'est le même chemin qu'un clic sur la pastille.
+$('inventory').addEventListener('click', (e) => {
+  const li = e.target.closest('li[data-veh]');
+  if (!li) return;
+  selectVehicle(li.dataset.veh);
+  const m = markers.get(li.dataset.veh);
+  if (m) map.panTo(m.getLatLng(), { animate: true, duration: 0.5 });
+});
+
+$('statVehiclesBtn').onclick = () => {
+  if (state.listView?.kind === 'vehicules') closeInventory();
+  else openInventory('vehicules');
+};
+$('statLinesBtn').onclick = () => {
+  if (state.listView?.kind === 'lignes' && !state.listView.routeId) closeInventory();
+  else openInventory('lignes');
+};
+$('btnAllLines').onclick = () => openInventory('lignes');
+
 function renderAll(stale) {
   renderHeader(stale);
   renderMarkers();
@@ -437,6 +604,7 @@ function renderAll(stale) {
   renderLineList();
   renderAlerts();
   renderDetail();
+  renderInventory();
   $('btnCopyLink').classList.toggle('hidden', !state.filterLine);
 }
 
@@ -450,40 +618,231 @@ function renderHeader(stale) {
   $('statAlerts').textContent = state.alerts.length;
 }
 
-function pillHtml(v, dimmed) {
-  const caret = v.bearing != null && v.status === 'en_route'
-    ? `<span class="caret" style="transform: rotate(${v.bearing}deg)"></span>` : '';
-  return `<div class="pill ${v.status === 'at_stop' ? 'at_stop' : ''} ${dimmed ? 'dimmed' : ''}" style="--c:#${v.color};--tc:#${v.text_color}">${caret}${escapeHtml(v.line)}</div>`;
+// L'icône n'est JAMAIS regénérée une fois créée : la pastille se met à jour
+// en CSS (variables --c/--tc/--rot). Un setIcon() recrée le nœud DOM, ce qui
+// casse la transition, l'animation du halo et coûte cher avec 300 véhicules.
+// PILL_HTML n'est donc qu'au tout premier affichage, et chaque nouvelle
+// icône se peint dans createIcon() — le groupe de clusters en fabrique et en
+// jette en permanence, notamment pendant l'animation.
+const PILL_HTML = '<div class="pill"><span class="caret"></span><span class="lb"></span></div>';
+
+class PillIcon extends L.DivIcon {
+  createIcon() {
+    // Leaflet positionne l'élément renvoyé : c'est le DIV enveloppant qu'il
+    // faut lui rendre. La pastille, elle, est son premier enfant — la
+    // la peindre y mettrait les classes et écraserait son contenu
+    // (le caret disparaissait, le texte prenait toute la place).
+    const wrap = L.DivIcon.prototype.createIcon.call(this);
+    const p = this.options.marker?.__paint;
+    if (p) paintPillEl(wrap.firstElementChild, ...p);
+    return wrap;
+  }
+}
+
+function paintPillEl(el, v, dimmed, selected) {
+  if (!el) return;
+  el.classList.toggle('at_stop', v.status === 'at_stop');
+  el.classList.toggle('dimmed', !!dimmed);
+  el.classList.toggle('sel', !!selected);
+  el.classList.toggle('moving', v.status === 'en_route' && v.bearing != null);
+  // Véhicule théorique : on ne le présente jamais comme du temps réel.
+  el.classList.toggle('theo', !!v.theoretical);
+  el.style.setProperty('--c', '#' + v.color);
+  el.style.setProperty('--tc', '#' + v.text_color);
+  el.style.setProperty('--rot', (v.bearing ?? 0) + 'deg');
+  const lb = el.lastElementChild;
+  if (lb && lb.textContent !== v.line) lb.textContent = v.line;
+}
+
+function paintPill(m, v, dimmed, selected) {
+  m.__paint = [v, dimmed, selected];
+  const el = m._icon?.firstElementChild;
+  if (el) paintPillEl(el, v, dimmed, selected);
+}
+
+// --- mouvement continu, piloté par la vitesse mesurée -------------------
+// Le flux amont arrive toutes les ~10 s. Interpoler entre deux points avec
+// une durée fixe donnait un mouvement correct mais saccadé : à chaque
+// nouvelle donnée, l'animation repartait de la position affichée, ce qui se
+// voyait surtout quand deux actualisations se suivaient de près.
+//
+// On fait du routage à l'estime (dead reckoning) : à chaque point observé on
+// mesure la vitesse réelle (distance / temps), on la lisse, et la pastille
+// avance en continu à cette vitesse entre deux points. Une nouvelle mesure
+// ne fait que corriger la trajectoire — plus de redémarrage visible.
+const M_PER_DEG_LAT = 110540;
+const FOLLOW_MS = 200; // rythme du recentrage en mode « suivre »
+const SPEED_ALPHA = 0.35; // lissage exponentiel de la vitesse
+const MIN_MOVE_MS = 1500; // en dessous, le saut est du bruit : on ignore
+let motionFrame = null, lastFollow = 0, selfPan = false;
+const moving = new Set();
+
+function metresBetween(a, b) {
+  const kx = M_PER_DEG_LAT * Math.cos((a.lat * Math.PI) / 180);
+  const dy = (b.lat - a.lat) * M_PER_DEG_LAT;
+  const dx = (b.lng - a.lng) * kx;
+  return Math.hypot(dx, dy);
+}
+
+function setMarkerFix(m, lat, lon) {
+  const now = performance.now();
+  const fix = L.latLng(lat, lon);
+  const prevFix = m.__fix;
+  const prevAt = m.__fixAt;
+  if (prevFix && prevAt != null) {
+    const dt = now - prevAt;
+    const d = metresBetween(prevFix, fix);
+    if (dt >= MIN_MOVE_MS) {
+      const inst = d / (dt / 1000);
+      // Vitesse lissée : une valeur isolée aberrante ne doit pas faire
+      // bondir la pastille, et un arrêt franc doit la ramener à zéro.
+      m.__speed = m.__speed == null ? inst : m.__speed + (inst - m.__speed) * SPEED_ALPHA;
+    }
+    if (d > 5) m.__bearing = bearingDeg(prevFix, fix);
+  }
+  m.__fix = fix;
+  m.__fixAt = now;
+  // Point de départ de l'animation : la position PRÉDITE à l'instant présent,
+  // pas celle affichée. C'est ce qui supprime le redémarrage visible : la
+  // pastille est déjà là où la vitesse dit qu'elle doit être.
+  m.__from = predict(m, now);
+  m.__target = fix;
+  m.__t0 = now;
+  moving.add(m);
+  kickMotion();
+}
+
+// Extrapolation à l'instant `now` : position observée + vitesse × temps.
+function predict(m, now) {
+  const fix = m.__fix;
+  if (!fix || m.__fixAt == null) return m.__target || m.getLatLng();
+  const v = m.__speed || 0;
+  if (v <= 0.05) return fix;
+  const dt = Math.min(Math.max((now - m.__fixAt) / 1000, 0), 8); // au-delà, on ne devine plus
+  const d = v * dt;
+  if (d < 1) return fix;
+  const bearing = m.__paint?.[0]?.bearing ?? m.__bearing ?? 0;
+  const rad = (bearing * Math.PI) / 180;
+  const kx = M_PER_DEG_LAT * Math.cos((fix.lat * Math.PI) / 180);
+  return L.latLng(fix.lat + (Math.cos(rad) * d) / M_PER_DEG_LAT, fix.lng + (Math.sin(rad) * d) / kx);
+}
+
+function bearingDeg(a, b) {
+  const toRad = (d) => (d * Math.PI) / 180;
+  const y = Math.sin(toRad(b.lng - a.lng)) * Math.cos(toRad(b.lat));
+  const x = Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat))
+    - Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lng - a.lng));
+  return (Math.atan2(y, x) * 180) / Math.PI;
+}
+
+function kickMotion() {
+  if (motionFrame) return;
+  motionFrame = requestAnimationFrame(stepMotion);
+}
+
+function stepMotion(now) {
+  motionFrame = null;
+  const t = now ?? performance.now();
+  for (const m of moving) {
+    const from = m.__from, to = m.__target;
+    if (!from || !to) continue;
+    // Durée = distance / vitesse mesurée. Un bus rapide arrive au bout
+    // vite, un bus à l'arrêt ne bouge pas : plus de durée constante
+    // arbitraire qui ne colle à rien.
+    const d = metresBetween(from, to);
+    const v = m.__speed || 0;
+    const dur = v > 0.3 ? Math.min(Math.max((d / v) * 1000, 2500), 12000) : 9000;
+    const p = Math.min(1, (t - m.__t0) / dur);
+    // Un marqueur caché dans un cluster n'a pas d'icône à déplacer : on le
+    // téléporte au but. Interpoler 300 pastilles hors écran coûtait 18 000
+    // setLatLng par seconde pour rien.
+    if (p >= 1 || !m._icon) { m.setLatLng(to); moving.delete(m); continue; }
+    // ease-in-out : départ et arrivée doux, vitesse constante au milieu
+    const e = p < 0.5 ? 2 * p * p : 1 - ((-2 * p + 2) ** 2) / 2;
+    // Attention : un LatLng de Leaflet expose .lng, PAS .lon. Se tromper
+    // produisait un NaN qui tuait la boucle d'animation.
+    const ll = L.latLng(from.lat + (to.lat - from.lat) * e, from.lng + (to.lng - from.lng) * e);
+    m.setLatLng(ll);
+    // Mode « suivre » : on recentre la carte sur le véhicule choisi, à
+    // 5 images/s — assez pour que ça semble continu, pas assez pour
+    // siphonner le GPU.
+    if (state.follow && state.selectedId && m.__key === state.selectedId && t - lastFollow > FOLLOW_MS) {
+      lastFollow = t;
+      selfPan = true;
+      map.panTo(ll, { animate: false });
+      setTimeout(() => { selfPan = false; }, 0);
+    }
+  }
+  if (moving.size) motionFrame = requestAnimationFrame(stepMotion);
+  else motionFrame = null;
+}
+
+function stopMotion() {
+  for (const m of moving) if (m.__target) m.setLatLng(m.__target);
+  moving.clear();
+  if (motionFrame) { cancelAnimationFrame(motionFrame); motionFrame = null; }
 }
 
 function renderMarkers() {
-  const vis = new Set(visibleVehicles().map(vKey));
+  const vis = visibleVehicles();
+  const visKeys = new Set(vis.map(vKey));
   for (const [k, m] of markers) {
-    if (!vis.has(k)) { markerLayer.removeLayer(m); markers.delete(k); }
+    if (visKeys.has(k)) continue;
+    markerLayer.removeLayer(m);
+    markers.delete(k);
+    moving.delete(m);
   }
-  // animation fluide : transition CSS le temps de la mise à jour
-  const container = map.getContainer();
-  container.classList.add('animating');
-  clearTimeout(renderMarkers._t);
-  renderMarkers._t = setTimeout(() => container.classList.remove('animating'), 1400);
-  for (const v of visibleVehicles()) {
+  for (const v of vis) {
     const k = vKey(v);
-    const dimmed = state.filterLine != null && v.route_id !== state.filterLine;
+    const selected = state.selectedId === k;
+    // Un véhicule sélectionné reste mis en évidence même si le filtre l'a
+    // écarté de la vue : sinon il disparaît et on ne sait plus où on l'a
+    // cliqué. Le reste, en revanche, s'assombrit.
+    const dimmed = (state.filterLine != null && v.route_id !== state.filterLine) || (state.selectedId != null && !selected);
     let m = markers.get(k);
     if (!m) {
+      const icon = new PillIcon({ iconSize: [46, 24], iconAnchor: [23, 12], html: PILL_HTML });
       m = L.marker([v.lat, v.lon], {
-        icon: L.divIcon({ className: '', html: pillHtml(v, dimmed), iconSize: [46, 24], iconAnchor: [23, 12] }),
+        icon,
+        keyboard: false, // 300 pastilles au clavier : inutile, et ça bloque Tab
       });
+      icon.options.marker = m; // createIcon() s'appuie dessus pour se peindre
+      m.__key = k;
+      m.__target = L.latLng(v.lat, v.lon);
       m.bindTooltip(`${escapeHtml(v.line)} → ${escapeHtml(v.destination)}`, { direction: 'top', className: 'bus-tip' });
-      m.on('click', () => { state.selectedId = k; state.selectedStop = null; state.nearby = null; stopLayer.clearLayers(); renderDetail(); });
+      m.on('click', () => selectVehicle(k));
       markers.set(k, m);
       markerLayer.addLayer(m);
     } else {
-      m.setLatLng([v.lat, v.lon]);
-      m.setIcon(L.divIcon({ className: '', html: pillHtml(v, dimmed), iconSize: [46, 24], iconAnchor: [23, 12] }));
-      m.setTooltipContent(`${escapeHtml(v.line)} → ${escapeHtml(v.destination)}`);
+      setMarkerFix(m, v.lat, v.lon);
     }
+    paintPill(m, v, dimmed, selected);
+    const tip = v.theoretical
+      ? `${escapeHtml(v.line)} → ${escapeHtml(v.destination)} <em>(théorique)</em>`
+      : `${escapeHtml(v.line)} → ${escapeHtml(v.destination)}`;
+    if (m.__tip !== tip) { m.setTooltipContent(tip); m.__tip = tip; }
   }
+  syncSelectedMarker();
+}
+
+// Pastille de mise en évidence, toujours au-dessus des clusters.
+function syncSelectedMarker() {
+  const v = currentVehicle();
+  if (!v) {
+    if (selMarker) { selLayer.removeLayer(selMarker); moving.delete(selMarker); selMarker = null; }
+    return;
+  }
+  if (!selMarker) {
+    const icon = new PillIcon({ iconSize: [46, 24], iconAnchor: [23, 12], html: PILL_HTML, pane: 'selPane' });
+    selMarker = L.marker([v.lat, v.lon], { icon, keyboard: false, interactive: false, riseOnHover: false });
+    icon.options.marker = selMarker;
+    selMarker.__key = state.selectedId;
+    selLayer.addLayer(selMarker);
+  } else {
+    selMarker.__key = state.selectedId;
+    setMarkerFix(selMarker, v.lat, v.lon);
+  }
+  paintPill(selMarker, v, false, true);
 }
 
 async function renderRouteShape() {
@@ -502,7 +861,7 @@ async function renderRouteShape() {
       for (const s of v.stops) {
         const c = L.circleMarker([s.lat, s.lon], { radius: 5, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 });
         c.bindTooltip(escapeHtml(s.name), { direction: 'top', className: 'bus-tip' });
-        c.on('click', () => { state.selectedStop = s; state.selectedId = null; state.nearby = null; loadDepartures(s.id); });
+        c.on('click', () => { state.selectedStop = s; clearVehicle(); state.nearby = null; loadDepartures(s.id); });
         c.addTo(shapeLayer);
       }
     }
@@ -529,50 +888,62 @@ function renderLineList() {
     .filter((r) => (counts[r.route_id] || 0) > 0 && matchQ(r))
     .sort((a, b) => (counts[b.route_id] - counts[a.route_id]) || a.short_name.localeCompare(b.short_name));
 
-  // favoris épinglés en haut
+  // La liste est reconstruite d'un seul tenant puis injectée d'un coup :
+  // 200 <li> recréés toutes les 15 s étaient le principal gaspillage.
   const favUl = $('favList');
-  favUl.innerHTML = '';
   const favItems = state.routes.filter((r) => state.favs.has(r.route_id) && matchQ(r));
+  let html = '';
   for (const r of favItems) {
-    const li = document.createElement('li');
-    li.className = 'line-item favline' + (state.filterLine === r.route_id ? ' sel' : '') + ((counts[r.route_id] || 0) === 0 ? ' dim' : '');
-    li.innerHTML = lineItemHtml(r, counts[r.route_id] || 0);
-    bindLineItem(li, r);
-    favUl.appendChild(li);
+    const cls = 'line-item favline' + (state.filterLine === r.route_id ? ' sel' : '') + ((counts[r.route_id] || 0) === 0 ? ' dim' : '');
+    html += `<li class="${cls}" data-route="${escapeHtml(r.route_id)}">${lineItemHtml(r, counts[r.route_id] || 0)}</li>`;
   }
+  setHtml(favUl, html);
   favUl.style.display = favItems.length ? '' : 'none';
 
   $('linesCount').textContent = `(${active.length})`;
-  const ul = $('lineList');
-  ul.innerHTML = '';
-  if (!active.length) { ul.innerHTML = '<li class="line-item dim">Aucune ligne — essayez une autre recherche.</li>'; return; }
+  if (!active.length) { setHtml($('lineList'), '<li class="line-item dim">Aucune ligne — essayez une autre recherche.</li>'); return; }
+  let list = '';
   for (const r of active.slice(0, 200)) {
     if (state.favs.has(r.route_id)) continue; // déjà épinglée
-    const li = document.createElement('li');
-    li.className = 'line-item' + (state.filterLine === r.route_id ? ' sel' : '');
-    li.innerHTML = lineItemHtml(r, counts[r.route_id]);
-    bindLineItem(li, r);
-    ul.appendChild(li);
+    list += `<li class="line-item${state.filterLine === r.route_id ? ' sel' : ''}" data-route="${escapeHtml(r.route_id)}">${lineItemHtml(r, counts[r.route_id])}</li>`;
   }
+  setHtml($('lineList'), list);
 }
 
-function bindLineItem(li, r) {
-  li.querySelector('[data-fav]').onclick = (e) => {
+// Délégation : un seul écouteur pour les deux listes de lignes, au lieu de
+// N écouteurs reconstruits à chaque rafraîchissement.
+function onLineListClick(e) {
+  const li = e.target.closest('li[data-route]');
+  if (!li) return;
+  const r = routeById.get(li.dataset.route);
+  if (!r) return;
+  if (e.target.closest('[data-fav]')) {
     e.stopPropagation();
-    state.favs.has(r.route_id) ? state.favs.delete(r.route_id) : state.favs.add(r.route_id);
+    if (state.favs.has(r.route_id)) state.favs.delete(r.route_id);
+    else state.favs.add(r.route_id);
     localStorage.setItem('tisseo.live.favs', JSON.stringify([...state.favs]));
     renderLineList();
-  };
-  li.onclick = () => selectLine(state.filterLine === r.route_id ? null : r.route_id);
+  } else {
+    // Un clic sur une ligne : on la filtre, on la trace en surbrillance, et
+    // on ouvre la liste de ses véhicules avec leurs positions.
+    const on = state.filterLine === r.route_id;
+    selectLine(on ? null : r.route_id);
+    openInventory('lignes', on ? null : r.route_id);
+  }
 }
+$('favList').addEventListener('click', onLineListClick);
+$('lineList').addEventListener('click', onLineListClick);
 
 function selectLine(routeId) {
   state.filterLine = routeId;
   state.selectedId = null;
+  state.selVeh = null;
+  state.follow = false;
   state.selectedStop = null;
   state.nearby = null;
   geoLayer.clearLayers();
   stopLayer.clearLayers();
+  vehLayer.clearLayers();
   // deep link
   const url = new URL(location.href);
   if (routeId) {
@@ -585,26 +956,130 @@ function selectLine(routeId) {
   paintNetwork();
 }
 
+// ---------- itinéraire d'un véhicule ---------------------------------------
+// Le flux RT ne dit pas « où va ce bus », seulement « il est entre tel et tel
+// arrêt ». Pour reconstituer son itinéraire on recolle trois morceaux :
+//   - le sens de la variante (le headsign du GTFS == la destination du RT)
+//   - les arrêts à venir, que le serveur donne déjà classés et horodatés
+//   - la traînée réellement parcourue (/api/track, ~45 min d'historique)
+function pickVariant(variants, v) {
+  const dest = norm(v.destination), to = norm(v.to), from = norm(v.from);
+  let best = null, bestScore = -1;
+  for (const variant of variants) {
+    const stops = variant.stops || [];
+    let score = 0;
+    if (variant.headsign && norm(variant.headsign) === dest) score += 4;
+    if (stops.length && norm(stops[stops.length - 1].name) === (to || dest)) score += 3;
+    if (stops.length && norm(stops[0].name) === from) score += 2;
+    if (v.next_stop_id && stops.some((s) => s.id === v.next_stop_id)) score += 1;
+    if (score > bestScore) { bestScore = score; best = variant; }
+  }
+  return best;
+}
+
+async function selectVehicle(key) {
+  state.selectedId = key;
+  state.selectedStop = null;
+  state.nearby = null;
+  stopLayer.clearLayers();
+  // La pastille doit s'allumer tout de suite : renderMarkers() ne recrée
+  // aucune icône, il ne met que des classes et des variables CSS à jour.
+  renderMarkers();
+  renderDetail();
+  await loadVehicleItinerary();
+}
+
+function currentVehicle() {
+  return state.vehicles.find((v) => vKey(v) === state.selectedId) || null;
+}
+
+async function loadVehicleItinerary() {
+  const v = currentVehicle();
+  vehLayer.clearLayers();
+  if (!v) { state.selVeh = null; return; }
+  const key = vKey(v);
+  let variant = state.selVeh?.key === key ? state.selVeh.variant : null;
+  let stops = state.selVeh?.key === key ? state.selVeh.stops : null;
+  try {
+    if (!variant) {
+      const detail = await loadRouteDetail(v.route_id);
+      variant = pickVariant(detail.variants || [], v);
+      stops = variant?.stops || null;
+    }
+    const track = await fetchTrack(v.route_id, v.id);
+    state.selVeh = { key, routeId: v.route_id, variant, stops, track };
+    drawVehicleItinerary(v, state.selVeh);
+  } catch (e) {
+    state.selVeh = null;
+    toast('Itinéraire indisponible : ' + e.message);
+  }
+  renderDetail();
+}
+
+async function fetchTrack(routeId, id) {
+  const r = await fetch(`/api/track?route_id=${encodeURIComponent(routeId)}&id=${encodeURIComponent(id)}`);
+  if (!r.ok) throw new Error('track ' + r.status);
+  const j = await r.json();
+  return (j.track || []).map((p) => [p.lat, p.lon]);
+}
+
+function drawVehicleItinerary(v, sel) {
+  vehLayer.clearLayers();
+  const color = '#' + (v.color || 'dc006b');
+  const upcoming = new Set((v.remaining || []).map((r) => r.id));
+  const currentStopId = v.at_stop_id || v.next_stop_id;
+
+  // Traînée : ce que le véhicule a réellement fait depuis ~45 min.
+  if (sel.track.length > 1) {
+    L.polyline(sel.track, { color: '#ffffff', weight: 6, opacity: 0.18 }).addTo(vehLayer);
+    L.polyline(sel.track, { color, weight: 3, opacity: 0.5, dashArray: '1 7', lineCap: 'round' }).addTo(vehLayer);
+  }
+
+  // Tracé complet de la variante dans le bon sens.
+  const latlngs = (sel.variant?.shape || []).map(([la, lo]) => [la, lo]);
+  if (latlngs.length > 1) {
+    // Trait large et lumineux : l'itinéraire doit sauter aux yeux même par-dessus
+    // un fond clair, sans avoir à dézoomer.
+    L.polyline(latlngs, { color: '#000000', weight: 13, opacity: 0.45, lineCap: 'round', lineJoin: 'round' }).addTo(vehLayer);
+    L.polyline(latlngs, { color: '#ffffff', weight: 10, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }).addTo(vehLayer);
+    L.polyline(latlngs, { color, weight: 6, opacity: 1, lineCap: 'round', lineJoin: 'round' }).addTo(vehLayer);
+  }
+
+  // Arrêts : passés (creux), prochain (halé), à venir (pleins).
+  for (const s of sel.stops || []) {
+    const past = !upcoming.has(s.id) && s.id !== currentStopId;
+    const isNext = s.id === currentStopId;
+    const dep = (v.remaining || []).find((r) => r.id === s.id);
+    const marker = L.circleMarker([s.lat, s.lon], past
+      ? { radius: 4, color, weight: 2, fillColor: '#0b0e12', fillOpacity: 0.9, opacity: 0.55 }
+      : isNext
+        ? { radius: 8, color: '#fff', weight: 3, fillColor: color, fillOpacity: 1 }
+        : { radius: 5, color: '#fff', weight: 2, fillColor: color, fillOpacity: 1 });
+    marker.bindTooltip(
+      escapeHtml(s.name) + (dep?.time ? ` · ${fmtTime(dep.time)}` : past ? ' · déjà passé' : ''),
+      { direction: 'top', className: 'bus-tip' });
+    marker.on('click', () => { state.selectedStop = { id: s.id, name: s.name, lat: s.lat, lon: s.lon }; clearVehicle(); vehLayer.clearLayers(); loadDepartures(s.id); });
+    marker.addTo(vehLayer);
+  }
+}
+
 function renderAlerts() {
   $('alertsCount').textContent = `(${state.alerts.length})`;
-  const ul = $('alertList');
-  ul.innerHTML = '';
   const list = state.filterLine
     ? state.alerts.filter((a) => a.routes.length === 0 || a.routes.includes(state.filterLine))
     : state.alerts;
-  if (!list.length) { ul.innerHTML = '<li class="sev1">Aucune perturbation signalée.</li>'; return; }
+  if (!list.length) { setHtml($('alertList'), '<li class="sev1">Aucune perturbation signalée.</li>'); return; }
+  let html = '';
   for (const a of list.slice(0, 30)) {
-    const li = document.createElement('li');
-    li.className = 'sev' + (a.severity ?? 0);
     const routeTags = (a.routes || []).slice(0, 4).map((id) => {
       const r = routeById.get(id);
       return r ? escapeHtml(r.short_name) : '';
     }).filter(Boolean).join(', ');
-    li.innerHTML = `<b>${escapeHtml(stripHtml(a.title) || 'Info réseau')}</b>` +
+    html += `<li class="sev${a.severity ?? 0}"><b>${escapeHtml(stripHtml(a.title) || 'Info réseau')}</b>` +
       (routeTags ? `<div class="aroutes">Lignes : ${routeTags}</div>` : '') +
-      (a.url ? ` <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">détails →</a>` : '');
-    ul.appendChild(li);
+      (a.url ? ` <a href="${escapeHtml(a.url)}" target="_blank" rel="noopener">détails → </a>` : '') + '</li>';
   }
+  setHtml($('alertList'), html);
 }
 
 function relTime(t) {
@@ -625,7 +1100,7 @@ function renderDetail() {
       for (const d of s.departures) html += depHtml(d);
       html += `</div>`;
     }
-    box.innerHTML = html;
+    setHtml(box, html);
     box.classList.remove('hidden');
     $('dClose').onclick = () => { state.nearby = null; geoLayer.clearLayers(); box.classList.add('hidden'); };
     return;
@@ -636,32 +1111,61 @@ function renderDetail() {
     const fav = isStopFav(s.id);
     let html = `<button class="close" id="dClose">✕</button>` +
       `<h3>🚏 ${escapeHtml(s.name)} <button id="dFav" class="fav ${fav ? 'on' : ''}" title="Arrêt favori">${fav ? '★' : '☆'}</button></h3>`;
-    if (!state.stopDeps.length) html += `<div class="nodep">Aucun passage dans les 2 prochaines heures.</div>`;
+    if (!state.stopDeps.length) html += '<div class="nodep">Aucun passage dans les 2 prochaines heures.</div>';
     for (const d of state.stopDeps.slice(0, 10)) html += depHtml(d);
-    box.innerHTML = html;
+    setHtml(box, html);
     box.classList.remove('hidden');
     $('dClose').onclick = () => { state.selectedStop = null; state.stopDeps = []; stopLayer.clearLayers(); box.classList.add('hidden'); renderStopResults(); renderFavStops(); };
     $('dFav').onclick = () => toggleStopFav(state.selectedStop);
     return;
   }
   // 3) fiche véhicule
-  const v = state.vehicles.find((x) => vKey(x) === state.selectedId);
+  const v = currentVehicle();
   if (!v) { box.classList.add('hidden'); return; }
   const statusTxt = { en_route: 'En circulation', at_stop: 'À l’arrêt', not_started: 'Pas encore parti', terminus: 'Terminus' }[v.status] || v.status;
   const lieu = v.status === 'en_route' ? `${v.from} → ${v.to}` : (v.at_stop || '—');
   const next = v.next_stop ? `${v.next_stop}${v.next_time ? ' · ' + fmtTime(v.next_time) : ''}` : '—';
-  box.innerHTML = `<button class="close" id="dClose">✕</button>` +
+  const sel = state.selVeh;
+  const remaining = v.remaining || [];
+  const steps = remaining.map((r) =>
+    `<div class="step${r.id === v.at_stop_id ? ' now' : ''}"><span class="dot"></span>` +
+    `<span class="nm">${escapeHtml(r.name)}</span><span class="tm">${r.time ? fmtTime(r.time) : ''}</span></div>`).join('');
+
+  setHtml(box, `<button class="close" id="dClose">✕</button>` +
     `<span class="dline" style="background:#${v.color};color:#${v.text_color}">${escapeHtml(v.line)}</span>` +
     `<span class="status-tag ${v.status}">${statusTxt}</span>` +
+    (v.theoretical ? '<span class="theo-tag" title="Le GTFS temps réel de Tisséo ne couvre pas ce mode : position calculée à partir des horaires du GTFS statique">théorique</span>' : '') +
     `<h3>→ ${escapeHtml(v.destination)}</h3>` +
-    `<dl><dt>Position</dt><dd>${escapeHtml(lieu)}${v.snapped ? ' (tracé)' : ' (estimée)'}</dd>` +
+    `<dl><dt>Position</dt><dd>${escapeHtml(lieu)}${v.on_route ? ' (sur le tracé)' : v.snapped ? ' (rapprochée)' : ' (estimée)'}</dd>` +
     `<dt>Prochain arrêt</dt><dd>${escapeHtml(next)}</dd>` +
     `<dt>Mode</dt><dd>${escapeHtml(v.mode)}</dd>` +
-    `<dt>Véhicule</dt><dd>#${escapeHtml(String(v.id))}</dd></dl>` +
-    `<div class="progress"><i style="width:${Math.round(v.progress * 100)}%"></i></div>`;
+    `<dt>Véhicule</dt><dd>${v.theoretical
+      // L'id technique d'une rame théorique est illisible : on montre la course.
+      ? `rame de ${fmtTime(v.depart)} à ${fmtTime(v.arrivee)}`
+      : '#' + escapeHtml(String(v.id))}</dd></dl>` +
+    `<div class="progress"><i style="width:${Math.round((v.progress || 0) * 100)}%"></i></div>` +
+    `<div class="vbtns"><button id="dFollow" class="mini ${state.follow ? 'on' : ''}">${state.follow ? '■ Suivre' : '▶ Suivre le véhicule'}</button>` +
+    `<button id="dLine" class="mini">Toute la ligne ${escapeHtml(v.line)}</button></div>` +
+    (sel
+      ? (steps
+        ? `<h4>Prochains arrêts <span class="muted">(${remaining.length})</span></h4><div class="steps">${steps}</div>`
+        : '<div class="nodep">Aucun arrêt à venir : le véhicule a terminé son service.</div>')
+      : '<div class="nodep">Itinéraire en cours…</div>'));
   box.classList.remove('hidden');
-  $('dClose').onclick = () => { state.selectedId = null; box.classList.add('hidden'); };
+  $('dClose').onclick = () => {
+    clearVehicle(); vehLayer.clearLayers(); box.classList.add('hidden');
+  };
+  $('dFollow').onclick = () => { toggleFollow(); };
+  $('dLine').onclick = () => selectLine(v.route_id);
 }
+
+function toggleFollow() {
+  state.follow = !state.follow;
+  const v = currentVehicle();
+  if (state.follow && v) map.panTo([v.lat, v.lon], { animate: true, duration: 0.4 });
+  renderDetail();
+}
+
 
 // ---------- utilitaires ----------
 function fmtTime(ts) {
@@ -741,8 +1245,17 @@ $('btnGeo').onclick = () => {
   );
 };
 $('sidebarToggle').onclick = () => $('sidebar').classList.toggle('open');
-map.on('movestart', () => map.getContainer().classList.remove('animating'));
-map.on('zoomend', () => { if (netLoaded) paintNetwork(); });
+// Pendant un déplacement manuel, on fige les pastilles : interpoler en même
+// temps que l'utilisateur fait glisser la carte donne une impression de_sdk
+// traînée qui n'a rien à voir avec le réseau.
+// Pendant un déplacement manuel, on fige les pastilles : les interpoler en
+// même temps que l'utilisateur fait glisser la carte donne une impression de
+// traînée qui n'a rien à voir avec le réseau. (Le recentrage du mode
+// « suivre » est un panTo programmé : il se signale avec selfPan.)
+map.on('movestart', () => { if (!selfPan) stopMotion(); });
+// Un glissement de l'utilisateur l'emporte sur le suivi automatique.
+map.on('dragstart', () => { if (state.follow) { state.follow = false; renderDetail(); } });
+map.on('zoomend', () => { if (netLoaded) paintNetwork(); adaptProviderToZoom(); });
 
 // Cadre le réseau entier — utilisé au démarrage en mode tracés, quand
 // aucune tuile ne donne de repère géographique.

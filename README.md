@@ -140,14 +140,18 @@ de charge, et ressert les dernières données connues en cas de coupure (flag `s
 ## Tests
 
 ```powershell
-npm test        # 20 tests unitaires (node:test) : géométrie, recherche,
-                # simplification du réseau, contrôle des tuiles
+npm test        # tests unitaires (node:test) : géométrie, recherche,
+                # simplification du réseau, contrôle des tuiles, connecteur MCP
 npm start       # dans un terminal…
-npm run test:e2e   # …puis vérifie dans un vrai navigateur que la carte
-                # s'affiche, et que le mode tracés prend le relais sans tuiles
+npm run test:e2e              # …puis vérifie dans un vrai navigateur que la
+                              # carte s'affiche, et que le mode tracés prend
+                              # le relais quand aucune tuile ne charge
+npm run test:e2e:itineraire   # …et que le clic sur un véhicule affiche son
+                              # itinéraire sans rebâtir les icônes à chaque
+                              # actualisation
 ```
 
-`npm run test:e2e` a besoin de Playwright (installé à part, `npm i -D playwright`).
+Les deux tests `e2e` ont besoin de Playwright (installé à part, `npm i -D playwright`).
 
 ## Régénérer les données statiques
 

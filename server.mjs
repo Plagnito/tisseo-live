@@ -29,6 +29,7 @@ import { createRouter } from './lib/router.mjs';
 import { loadSchedules, scheduleDepartures, mergeDepartures, routeActiveAt } from './lib/schedules.mjs';
 import { buildNetwork } from './lib/network.mjs';
 import { createTileProbe } from './lib/tiles.mjs';
+import { theoreticalVehicles } from './lib/theoretical.mjs';
 import { createMcpServer } from './lib/mcp.mjs';
 import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
 
@@ -68,7 +69,7 @@ const stops = readData('stops.json');
 const variants = readData('route_variants.json');
 
 const model = createModel({ routes, stops, variants });
-const { routeById, modeOf, computeSnapshot, collectDepartures, searchStops } = model;
+const { routeById, modeOf, computeSnapshot, collectDepartures, searchStops, variantTrack } = model;
 const router = createRouter({ stops, variants, routes });
 
 // Repli d'horaires théoriques (le GTFS-RT ne couvre pas le métro) :
@@ -155,6 +156,53 @@ function recordHistory(snap) {
 let computed = null; // { rtTimestamp, snap, departures }
 const ALERTS_HOLD_MS = 15 * 60_000;
 let lastAlerts = { list: [], at: 0 };
+
+// --- Métro : véhicules théoriques ---------------------------------------
+// Le flux temps réel de Tisséo ne couvre pas le métro A/B, et le Téléo
+// disparaît du flux aux heures creuses. Plutôt que de laisser le réseau
+// incomplet, on anime ces rames à partir des horaires du GTFS statique, en
+// les marquant `theoretical: true` pour que l'interface dise d'où ça sort.
+// La liste est explicite : une déduction « ce mode n'a aucun véhicule là,
+// maintenant » ferait apparaître des rames fantômes dès que le réseau est
+// simplement calme — le mode est bien couvert, il n'y a juste personne.
+const THEO_MODES = new Set(
+  (process.env.TISSEO_THEO_MODES ?? 'Métro,Téléo').split(',').map((s) => s.trim()).filter(Boolean)
+);
+let showTheoretical = true;
+// Horloge injectable (TISSEO_NOW, epoch en secondes). Sert aux tests et au
+// rejeu : le métro n'a aucune rame théorique à 00h10, ce qui rendrait une
+// vérification automatique dépendante de l'heure de la machine.
+const CLOCK = () => (Number(process.env.TISSEO_NOW) || Math.floor(Date.now() / 1000));
+function theoreticalVehiclesFor(snap, nowSec) {
+  if (!showTheoretical || !schedules?.byRoute) return [];
+  // Filet de sécurité : si un mode se met un jour à être couvert par le flux,
+  // on ne fabrique plus de véhicules pour lui.
+  const liveModes = new Set(snap.vehicles.map((v) => v.mode));
+  const wanted = new Set([...THEO_MODES].filter((m) => !liveModes.has(m)));
+  if (!wanted.size) return [];
+  const out = [];
+  for (const route of routes) {
+    const mode = modeOf(route);
+    if (!wanted.has(mode)) continue;
+    for (const key of schedules.byRoute.keys()) {
+      const [routeId, dir] = key.split('|');
+      if (routeId !== route.route_id) continue;
+      const track = variantTrack(routeId, dir);
+      if (!track) continue;
+      out.push(...theoreticalVehicles(schedules, routeId, dir, nowSec, {
+        stops,
+        route,
+        orderStops: track.variant.stops,
+        shapeIndex: track.idx,
+        stopS: track.stopS,
+        modeLabel: mode,
+        headsign: track.variant.headsign,
+      }));
+    }
+  }
+  return out;
+}
+
 async function getComputed() {
   const rt = await fetchRealtime();
   const ts = rt?.header?.timestamp ?? 0;
@@ -167,11 +215,23 @@ async function getComputed() {
     if (snap.alerts.length) lastAlerts = { list: snap.alerts, at: Date.now() };
     else if (lastAlerts.list.length && Date.now() - lastAlerts.at < ALERTS_HOLD_MS) snap.alerts = lastAlerts.list;
     const departures = collectDepartures(rt, ts);
-    recordHistory(snap);
-    computed = { rtTimestamp: ts, snap, departures };
+    computed = { rtTimestamp: ts, rt: snap, departures };
   }
+  // Les positions théoriques avancent même quand le flux est figé : on les
+  // recompose à chaque lecture au lieu de les laisser dans le cache.
+  const live = computed.rt;
+  const theo = theoreticalVehiclesFor(live, CLOCK());
+  const perRoute = { ...live.perRoute };
+  for (const v of theo) perRoute[v.route_id] = (perRoute[v.route_id] ?? 0) + 1;
+  const vehicles = live.vehicles.concat(theo);
+  recordHistory({ rt_timestamp: live.rt_timestamp, vehicles });
   const stale = Boolean(cache.error) || Date.now() - cache.fetchedAt > REFRESH_MS * 2;
-  return { ...computed, stale };
+  return {
+    rtTimestamp: computed.rtTimestamp,
+    snap: { ...live, vehicles, perRoute },
+    departures: computed.departures,
+    stale,
+  };
 }
 
 // --- API ------------------------------------------------------------

@@ -49,8 +49,8 @@ __cssChain([
   <div class="brand"><span class="dot"></span><h1>Tisséo <em>Live</em></h1><span class="city">Toulouse</span></div>
   <div class="live" id="liveBadge"><span class="pulse"></span><span id="liveText">connexion…</span></div>
   <div class="stats">
-    <div class="chip"><b id="statVehicles">–</b><span>véhicules</span></div>
-    <div class="chip"><b id="statLines">–</b><span>lignes</span></div>
+    <button class="chip" id="statVehiclesBtn" title="Lister tous les véhicules en service"><b id="statVehicles">–</b><span>véhicules</span></button>
+    <button class="chip" id="statLinesBtn" title="Lister toutes les lignes et leurs véhicules"><b id="statLines">–</b><span>lignes</span></button>
     <div class="chip"><b id="statAlerts">–</b><span>infos trafic</span></div>
   </div>
   <div class="actions">
@@ -72,6 +72,7 @@ __cssChain([
         <button data-mode="all" class="on">Tous</button>
         <button data-mode="bus">Bus</button>
         <button data-mode="tram">Tram</button>
+        <button data-mode="metro">Métro</button>
         <button data-mode="teleo">Téléo</button>
       </div>
       <div class="rowhead">
@@ -81,6 +82,7 @@ __cssChain([
       <div class="rowhead">
         <h2>Lignes en circulation <span id="linesCount"></span></h2>
         <button id="btnCopyLink" class="mini hidden" title="Copier le lien vers cette vue">🔗</button>
+        <button id="btnAllLines" class="mini" title="Lister toutes les lignes du réseau, avec leurs véhicules et leurs positions">Toutes les lignes</button>
       </div>
       <ul id="favList" class="lines favs"></ul>
       <ul id="lineList" class="lines"></ul>
@@ -88,10 +90,11 @@ __cssChain([
       <ul id="alertList" class="alerts"></ul>
       <p class="method">
         <b>Comment ça marche ?</b> Tisséo ne publie pas les positions GPS de ses véhicules en open data.
-        Cette carte <b>estime</b> chaque position par interpolation entre deux arrêts à partir des horaires
-        temps réel, puis la recale sur le <b>tracé réel</b> de la ligne quand c'est possible.
-        Le métro A/B n'est pas couvert par le flux temps réel : il n'apparaît pas sur la carte, mais ses
-        <b>horaires théoriques</b> (GTFS) alimentent les prochains passages des arrêts.
+        Cette carte <b>estime</b> chaque position : elle interpole le long du <b>tracé réel</b> de la ligne
+        entre les deux arrêts qui encadrent l'instant, à partir des horaires temps réel.
+        Le métro A/B et le Téléo ne sont pas couverts par le flux temps réel aux heures creuses :
+        leurs rames sont alors calculées à partir des <b>horaires du GTFS statique</b>, et marquées
+        <b>théoriques</b> (contours pointillés).
         Données : Tisséo / Toulouse Métropole (ODbL).
       </p>
     </div>
@@ -100,6 +103,7 @@ __cssChain([
     <div id="map"></div>
     <div id="error" class="error hidden"></div>
     <div id="toast" class="toast hidden"></div>
+    <section id="inventory" class="inventory hidden"></section>
     <section id="detail" class="detail hidden"></section>
   </main>
 </div>
