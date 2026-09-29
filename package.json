@@ -13,7 +13,8 @@
     "test:e2e:inventaire": "node test/e2e-inventaire.mjs",
     "test:e2e:iti": "node test/e2e-iti.mjs",
     "test:e2e:live": "node test/e2e-live.mjs",
-    "verifier:traces": "node scripts/verifier-traces.mjs",
+    "verifier:traces": "node --test test/traces.test.mjs",
+    "verifier:vitesse": "node test/vitesse.mjs",
     "verifier-mcp": "node scripts/verifier-mcp.mjs",
     "supervised": "node updater/supervisor.cjs"
   },

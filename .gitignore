@@ -6,3 +6,7 @@ data-live/
 .env
 updater/state.json
 updater/supervisor.log*
+
+# Tout ce que les tests et le script de relance écrivent pour être relu n'est
+# pas du code : journaux de diagnostic, sorties du superviseur.
+*.log

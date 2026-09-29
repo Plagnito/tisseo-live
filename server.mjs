@@ -70,7 +70,7 @@ const stops = readData('stops.json');
 const variants = readData('route_variants.json');
 
 const model = createModel({ routes, stops, variants });
-const { routeById, modeOf, computeSnapshot, collectDepartures, searchStops, variantTrack } = model;
+const { routeById, modeOf, computeSnapshot, collectDepartures, searchStops, stopClusters, variantTrack } = model;
 const router = createRouter({ stops, variants, routes });
 
 // Repli d'horaires théoriques (le GTFS-RT ne couvre pas le métro) :
@@ -537,6 +537,13 @@ app.get('/api/track', ah(async (req, res) => {
 }));
 
 // --- Itinéraires (A → B) ---------------------------------------------
+
+// Un nom d'arrêt masque souvent plusieurs quais, voire plusieurs stations
+// homonymes. On plafonne le nombre d'emplacements et surtout le nombre de
+// trajets calculés : au-delà, la requête deviendrait trop lente pour un
+// simple planificateur.
+const JOURNEY_MAX_SITES = 4;
+const JOURNEY_MAX_TENTATIVES = 8;
 // Un point peut être : un id d'arrêt (?from_stop=…), des coordonnées
 // (?from_lat=…&from_lon=…), "lat,lon" ou un nom d'arrêt (?from=capitole).
 function parseEndpoint(prefix, req) {
@@ -549,9 +556,32 @@ function parseEndpoint(prefix, req) {
   if (!q) return null;
   const m = String(q).match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
   if (m) return { lat: Number(m[1]), lon: Number(m[2]) };
-  const hit = searchStops(String(q), 1)[0];
-  if (!hit) return null;
-  return hit.kind === 'point' ? { stop_id: hit.id } : { lat: hit.lat, lon: hit.lon, label: hit.name };
+  // Une saisie en texte est ambiguë plus souvent qu'on ne croit : « Jean
+  // Jaurès » désigne dix-neuf arrêts répartis sur trois stations, et surtout
+  // plusieurs QUAIS par station — les deux sens d'une ligne de métro
+  // n'emploient pas le même stop_point pour la même station. Le routeur ne
+  // relie que les arrêts d'une même variante, il faut donc lui proposer chaque
+  // quai. On essaie dans l'ordre : stations les mieux desservies d'abord,
+  // puis tous leurs quais.
+  const clusters = stopClusters(String(q), JOURNEY_MAX_SITES);
+  if (!clusters.length) return null;
+  // Le premier cluster sert de point d'arrivée par défaut ; tous ses quais
+  // sont proposés au routeur, qui choisit lui-même le bon sens.
+  const principal = clusters[0];
+  return {
+    stop_ids: principal.ids,
+    label: stops[principal.representant]?.n ?? principal.nom,
+    sites: clusters.map((c) => ({
+      stop_ids: c.ids,
+      name: stops[c.representant]?.n ?? c.nom,
+    })),
+  };
+}
+
+// Un trajet sans correspondance n'est pas un trajet : c'est une marche. On
+// s'en sert de signal pour passer à l'emplacement suivant.
+function uniquementAPied(legs) {
+  return !legs?.length || legs.every((l) => l.type === 'walk');
 }
 
 app.get('/api/journey', ah(async (req, res) => {
@@ -569,9 +599,57 @@ app.get('/api/journey', ah(async (req, res) => {
   // estimations horaires (real:false). Pas de 502 pour un trajet.
   try { await getComputed(); } catch { /* feed indisponible */ }
   const at = Number(req.query.at) || Math.floor(Date.now() / 1000);
-  const out = router.journey(from, to, at, journeyOpts);
-  if (out.error) return res.status(422).json({ ...out, from: from.label, to: to.label });
-  res.json(out);
+
+  // Un nom d'arrêt masque le plus souvent plusieurs quais. On ne tente pas
+  // les combinaisons une par une (lent, et la bonne paire peut être la
+  // septième) : le routeur reçoit tous les quais de la station et choisit.
+  // Si le résultat n'est qu'une marche, on tente l'emplacement homonyme
+  // suivant — c'est rare, mais ça évite de proposer de traverser Toulouse à
+  // pied entre deux stations distantes de 300 m.
+  const gauche = from.sites ?? [{ stop_ids: from.stop_ids ?? [from.stop_id], name: from.label }];
+  const droite = to.sites ?? [{ stop_ids: to.stop_ids ?? [to.stop_id], name: to.label }];
+  let meilleur = null;
+  let essais = 0;
+  for (const f of gauche) {
+    for (const t of droite) {
+      if (essais >= JOURNEY_MAX_TENTATIVES) break;
+      essais++;
+      const out = router.journey(
+        f.stop_ids ? { stop_ids: f.stop_ids } : f,
+        t.stop_ids ? { stop_ids: t.stop_ids } : t,
+        at, journeyOpts,
+      );
+      if (out.error) continue;
+      // Critère : un trajet avec correspondance bat toujours un trajet à
+      // pied ; à qualité égale, le plus rapide gagne.
+      if (!meilleur) { meilleur = out; continue; }
+      const nouveauAMarche = uniquementAPied(out.legs);
+      const actuelAMarche = uniquementAPied(meilleur.legs);
+      if (nouveauAMarche && !actuelAMarche) continue;
+      if (!nouveauAMarche && actuelAMarche) { meilleur = out; continue; }
+      if ((out.arrive_at ?? Infinity) < (meilleur.arrive_at ?? Infinity)) meilleur = out;
+    }
+  }
+  const out = meilleur;
+  if (!out) {
+    return res.status(422).json({
+      error: 'Trajet introuvable',
+      from: from.label,
+      to: to.label,
+      hint: 'Essayez un nom d\'arrêt plus précis, ou des coordonnées "lat,lon".',
+    });
+  }
+  // On dit quel emplacement a été retenu quand il y en avait plusieurs : le
+  // voyageur doit pouvoir vérifier qu'on ne l'a pas envoyé à l'autre
+  // « Jean Jaurès ».
+  if (gauche.length > 1 || droite.length > 1) {
+    out.ambigu = {
+      from: gauche.length > 1 ? gauche.map((s) => s.name) : undefined,
+      to: droite.length > 1 ? droite.map((s) => s.name) : undefined,
+      retenu: { from: out.from?.name, to: out.to?.name },
+    };
+  }
+  return res.json(out);
 }));
 
 app.get('/api/status', ah(async (req, res) => {

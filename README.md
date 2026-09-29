@@ -54,8 +54,11 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
   entre deux arrêts puis rapproché au plus près de la ligne : on parcourt la
   polyligne du GTFS entre l'abscisse de l'arrêt de départ et celle de l'arrêt
   d'arrivée. `on_route` distingue « sur la route » de « rapproché ».
-  Contrôle qualité : `npm run verifier:traces` — sur les 124 lignes, le pire
-  arrêt est à 32 m de son tracé.
+   Contrôle qualité : c'est un test de la suite (`test/traces.test.mjs`) —
+   chaque arrêt doit être à moins de 100 m du tracé de sa ligne. Sur les 5 699
+   arrêts et 243 variantes, le pire écart est de 32 m. Pour le détail :
+   `node --test test/traces.test.mjs`.
+
 - **Métro A/B et Téléo.** Absents du GTFS-RT de Tisséo (ou plus aux heures
   creuses), leurs courses sont reconstruites depuis les horaires du GTFS
   statique et animées sur le tracé. Marqués **théoriques** partout : contour
@@ -82,9 +85,27 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
 - **Inventaire.** Les compteurs « véhicules » et « lignes » ouvrent la liste
   de ce qui roule, avec la position de chaque véhicule. Un clic sur une ligne
   la filtre, la trace, et ouvre ses véhicules.
-- **Itinéraire A→B.** Dijkstra sur ~20 k états côté serveur (marche,
-  correspondances, horaires temps réels appliqués segment par segment), tracé
-  sur la carte dans le sens emprunté.
+ - **Itinéraire A→B.** Dijkstra sur ~20 k états côté serveur (marche,
+   correspondances, horaires temps réels appliqués segment par segment), tracé
+   sur la carte dans le sens emprunté. Deux subtilités du réseau de Tisséo,
+   traitées explicitement :
+   - **Une station n'a pas un seul `stop_point`.** Les deux sens d'une ligne de
+     métro n'emploient pas le même identifiant pour la même station, et la
+     recherche ne relie que les arrêts d'une même variante. Le nom saisi est
+     donc groupé en *emplacements* (tous les quais à moins de 120 m) et le
+     routeur reçoit la station entière, pas un quai tiré au sort. Dix-neuf
+     arrêts s'appellent « Jean Jaurès », répartis sur trois stations.
+   - **L'attente dépend du mode.** Un métro toutes les 4 min ne s'attend pas
+     comme un bus toutes les 30 min. Avec une attente uniforme de 240 s, toute
+     correspondance devenait plus chère qu'une marche de 300 m, et le
+     planificateur proposait de marcher entre deux stations de métro à 271 m.
+     Attente par défaut et plafond sont maintenant fixés par mode (métro 120 s
+     / 300 s max, tramway 180 s / 480 s, bus 240 s / 900 s).
+
+   Quand un nom masque plusieurs stations, la réponse indique dans `ambigu`
+   quels emplacements ont été écartés : on ne renvoie pas « Jean Jaurès » sans
+   dire lequel.
+
 
 ## Connecteur MCP (ChatGPT, Claude…)
 
@@ -185,9 +206,10 @@ de charge, et ressert les dernières données connues en cas de coupure (flag `s
 ## Tests
 
 ```powershell
-npm test        # tests unitaires (node:test) : géométrie, interpolation sur
-                # le tracé, véhicules théoriques, recherche, fonds de carte,
-                # connecteur MCP
+npm test        # 154 tests unitaires (node:test) : géométrie, interpolation
+                # sur le tracé, mouvement des pastilles, choix du sens d'une
+                # ligne, véhicules théoriques, recherche d'arrêts et
+                # itinéraires, qualité des tracés, fonds de carte, connecteur MCP
 npm start       # dans un terminal…
 npm run test:e2e              # carte réelle + repli mode tracés sans tuiles
 npm run test:e2e:itineraire   # clic véhicule → itinéraire, fluidité, suivi
@@ -200,7 +222,8 @@ npm run test:e2e:live         # push SSE, alertes sur la carte, notifications
 Les tests `e2e` ont besoin de Playwright (installé à part, `npm i -D playwright`).
 
 ```powershell
-npm run verifier:traces   # chaque arrêt est-il bien sur le tracé de sa ligne ?
+node --test test/traces.test.mjs   # chaque arrêt est-il bien sur le tracé de sa ligne ?
+node test/vitesse.mjs              # vitesse mesurée affichée (serveur forcé à une heure de trafic)
 ```
 
 ## Régénérer les données statiques
