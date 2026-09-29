@@ -1,6 +1,6 @@
 // Vérifie les panneaux d'inventaire (lignes / véhicules) et la bascule de
 // fond de carte au-delà du zoom natif du fournisseur.
-// Lancement : node test/e2e-inventaire.mjs  (serveur déjà lancé sur 3127)
+// Lancement : node test/e2e-inventaire.mjs  (serveur déjà lancé sur 4127)
 import { createRequire } from 'node:module';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -15,7 +15,7 @@ function loadPlaywright() {
   throw new Error('playwright introuvable : npm i -D playwright');
 }
 const { chromium } = loadPlaywright();
-const URL = process.env.URL || 'http://localhost:3127/';
+const URL = process.env.URL || 'http://localhost:4127/';
 const shot = (n) => join(process.env.TEMP || '.', `tisseo-${n}.png`);
 
 const fails = [];

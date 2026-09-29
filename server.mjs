@@ -26,12 +26,13 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createModel, haversineM, GRACE_S } from './lib/core.mjs';
 import { createRouter } from './lib/router.mjs';
-import { loadSchedules, scheduleDepartures, mergeDepartures, routeActiveAt } from './lib/schedules.mjs';
+import { loadSchedules, scheduleDepartures, mergeDepartures, routeActiveAt, pairTimes, ymd } from './lib/schedules.mjs';
 import { buildNetwork } from './lib/network.mjs';
 import { createTileProbe } from './lib/tiles.mjs';
 import { theoreticalVehicles } from './lib/theoretical.mjs';
 import { createMcpServer } from './lib/mcp.mjs';
 import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
+import { indexRealtime } from './lib/realtime.mjs';
 
 // Les horaires théoriques (lib/schedules.mjs) raisonnent en heure LOCALE :
 // sur un serveur réglé en UTC (Raspberry Pi, conteneur), tout serait décalé
@@ -39,7 +40,7 @@ import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
 process.env.TZ = process.env.TISSEO_TZ || 'Europe/Paris';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const PORT = Number(process.env.PORT) || 3127;
+const PORT = Number(process.env.PORT) || 4127;
 const RT_URL = 'https://api.tisseo.fr/opendata/gtfsrt/GtfsRt.json';
 const REFRESH_MS = 10_000; // pas plus d'un appel amont toutes les 10 s
 const RT_TIMEOUT_MS = 8_000; // on ne bloque jamais une requête client 30 s
@@ -430,7 +431,7 @@ function buildDepartures(id, c, nowSec, radiusM = 150) {
       const k = `${d.line}|${d.destination}|${d.time}`;
       if (rtSeen.has(k)) continue;
       rtSeen.add(k);
-      rt.push(d);
+      rt.push({ ...d, stop_id: g });
     }
   }
   rt.sort((a, b) => a.time - b.time);
@@ -443,7 +444,7 @@ function buildDepartures(id, c, nowSec, radiusM = 150) {
       const k = `${d.route_id}|${d.dir}|${d.time}`;
       if (gtSeen.has(k)) continue;
       gtSeen.add(k);
-      gtfs.push(d);
+      gtfs.push({ ...d, stop_id: g });
     }
   }
   gtfs.sort((a, b) => a.time - b.time);
@@ -598,8 +599,12 @@ function nextDeparture(routeId, board, alight, t) {
     const i = x.stops.indexOf(board);
     return i >= 0 && x.stops.indexOf(alight) > i;
   });
-  const d = scheduleDepartures(schedules, board, t, 80)
-    .find((x) => x.route_id === routeId && (!v || x.dir === v.dir));
+  const pick = (list) => list.find((x) => x.route_id === routeId && (!v || x.dir === v.dir));
+  // D'abord les 2 h qui viennent ; sinon la nuit entière : à 00 h 30, le
+  // prochain bus est souvent à 05 h 15, et « aucun horaire » ferait
+  // inventer un départ immédiat.
+  const d = pick(scheduleDepartures(schedules, board, t, 400))
+    ?? pick(scheduleDepartures(schedules, board, t, 20_000, 14 * 3600));
   return d ? d.time : null;
 }
 
@@ -611,7 +616,33 @@ function inService(routeId, t) {
   if (nowish && computed?.snap?.perRoute?.[routeId]) return true;
   return routeActiveAt(schedules, routeId, t);
 }
-const journeyOpts = { nextDeparture, inService };
+// Heure d'ARRIVÉE théorique d'une course partie de board à depT : on
+// retrouve le départ dans la grille, puis son arrivée par appariement.
+function scheduledArrival(routeId, board, alight, depT, estS) {
+  if (!schedules || !(estS > 0)) return null;
+  const v = (variants[routeId] ?? []).find((x) => {
+    const i = x.stops.indexOf(board);
+    return i >= 0 && x.stops.indexOf(alight) > i;
+  });
+  const pick = (id) => (schedules.byStop.get(id) ?? []).filter((e) => e.route_id === routeId && (!v || e.dir === v.dir));
+  const eB = pick(board), eA = pick(alight);
+  if (!eB.length || !eA.length) return null;
+  const day0 = new Date(depT * 1000);
+  for (const offset of [0, -1]) {
+    const day = new Date(day0.getFullYear(), day0.getMonth(), day0.getDate() + offset);
+    const mid = Math.floor(day.getTime() / 1000);
+    const secs = depT - mid;
+    for (const pi of schedules.patternsByDate.get(ymd(day)) ?? []) {
+      const B = [...new Set(eB.flatMap((e) => e.perPat[pi] ?? []))].sort((a, b) => a - b);
+      if (!B.includes(secs)) continue;
+      const A = [...new Set(eA.flatMap((e) => e.perPat[pi] ?? []))].sort((a, b) => a - b);
+      const hit = pairTimes(B, A, estS).find(([b]) => b === secs);
+      if (hit) return mid + hit[1];
+    }
+  }
+  return null;
+}
+const journeyOpts = { nextDeparture, inService, scheduledArrival };
 
 // Géocodage d'adresses et de lieux (IGN Géoplateforme, sans clé), biaisé
 // vers Toulouse. Cache mémoire : un même lieu revient souvent.
@@ -662,6 +693,10 @@ const mcp = createMcpServer({
     scheduleUntil: () => scheduleUntil,
     // Horaires théoriques bruts : entrées d'un arrêt, motifs actifs un jour donné.
     scheduleEntries: (stopId) => schedules?.byStop.get(stopId) ?? [],
+    // Passages théoriques d'un quai à partir de t (horizon en secondes).
+    scheduleAt: (stopId, t, n = 60, horizonS = 2 * 3600) => scheduleDepartures(schedules, stopId, t, n, horizonS),
+    // Flux temps réel indexé : retards, heures théoriques, courses.
+    rtIndex: () => indexRealtime(cache.json),
     patternsOn: (ymd) => schedules?.patternsByDate.get(ymd) ?? [],
     reach: (fromStop, maxS, exclude, at) => {
       const excluded = new Set(exclude ?? []);
@@ -669,6 +704,7 @@ const mcp = createMcpServer({
       return router.reach(fromStop, maxS, excluded.size ? excluded : null);
     },
     nearestStop: (lat, lon) => router.nearestStop(lat, lon),
+    rideEstimate: (routeId, board, alight) => router.estimate(routeId, board, alight),
     fares,
     gtfsMeta,
     publicUrl: process.env.PUBLIC_URL || 'https://tisseo.plagnito.com',
@@ -717,7 +753,17 @@ const server = app.listen(PORT, process.env.HOST || undefined, () => {
 });
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') console.error(`Port ${PORT} déjà pris — lancez avec PORT=<autre> npm start`);
-  else if (err.code === 'EACCES') console.error(`Port ${PORT} refusé par le système — lancez avec PORT=<autre> npm start`);
+  else if (err.code === 'EACCES') {
+    // C'est le piège le plus vicieux sur Windows : un port réservé par
+    // Hyper-V/WSL (plages d'exclusion) ne donne pas « déjà utilisé » mais
+    // « accès refusé », et rien n'écoute. Le port par défaut de ce projet
+    // (4127) a justement été choisi pour être hors de ces plages.
+    console.error(`Port ${PORT} refusé par le système.`);
+    console.error('S\'il est dans une plage d\'exclusion Windows, aucun processus ne l\'aura libre :');
+    console.error('  netsh interface ipv4 show excludedportrange protocol=tcp');
+    console.error('Essayez-en un autre :  PORT=5200 npm start');
+    process.exit(1);
+  }
   else console.error(err);
   process.exit(1);
 });

@@ -1,6 +1,6 @@
 // Vérification manuelle des prochains passages : sources, doublons, couverture.
 // (renommer en verify.mjs — le préfixe _ le gardait hors du radar)
-const API = process.env.API || 'http://localhost:3127';
+const API = process.env.API || 'http://localhost:4127';
 const fmt = (t) => new Date(t * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 
 async function get(path) {

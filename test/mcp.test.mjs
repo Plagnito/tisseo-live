@@ -217,7 +217,9 @@ test('itineraire : étapes lisibles, marches fusionnées, direction et attente',
   assert.equal(r.etapes[0].duree_min, 2);
   assert.equal(r.etapes[1].direction, 'Basso Cambo');
   assert.equal(r.etapes[1].attente_min, 3);
-  assert.equal(r.etapes[1].horaires, 'horaire théorique');
+  assert.equal(r.etapes[1].source, 'gtfs');
+  assert.equal(r.etapes[1].horaire_theorique, r.etapes[1].depart);
+  assert.equal(r.etapes[1].source_arrivee, 'estimation', 'arrivée sans temps réel = estimée');
   assert.equal(r.partir_a, '18:00');
 });
 

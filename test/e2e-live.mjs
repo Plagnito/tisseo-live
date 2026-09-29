@@ -14,7 +14,7 @@ function loadPlaywright() {
   throw new Error('playwright introuvable');
 }
 const { chromium } = loadPlaywright();
-const BASE = process.env.URL || 'http://localhost:3127/';
+const BASE = process.env.URL || 'http://localhost:4127/';
 const shot = (n) => join(process.env.TEMP || '.', `tisseo-${n}.png`);
 
 const fails = [];

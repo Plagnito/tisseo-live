@@ -23,8 +23,14 @@ Autres limites connues :
 cd D:\Claude\SideApps\Tisseo
 npm install
 npm start
-# → http://localhost:3127
+# → http://localhost:4127
 ```
+
+Le port par défaut est **4127**, pas 3127 : sur cette machine, 3103-3202 est une
+plage d'exclusion Windows (réservée par Hyper-V/WSL). Un port dans cette plage
+ne donne pas « déjà utilisé » mais `EACCES` — refus du système alors que
+personne n'écoute, ce qui est très difficile à diagnostiquer. Pour choisir un
+port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
 
 ## API du mini-backend
 
@@ -116,7 +122,7 @@ Géocodage : [Géoplateforme IGN](https://geoservices.ign.fr/documentation/servi
 (sans clé) — seul le texte du lieu y est envoyé. Garde-fou : 120 appels / min / IP.
 
 ```powershell
-node scripts/verifier-mcp.mjs                          # serveur local (3127)
+node scripts/verifier-mcp.mjs                          # serveur local (4127)
 node scripts/verifier-mcp.mjs https://tisseo.plagnito.com/mcp
 ```
 

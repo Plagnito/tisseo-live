@@ -1,12 +1,12 @@
 // Vérifie un serveur MCP Tisséo Live EN MARCHE, comme le ferait ChatGPT :
 // poignée de main, liste des outils, puis un appel réel de chaque outil.
 //
-//   node scripts/verifier-mcp.mjs                       # http://localhost:3127/mcp
+//   node scripts/verifier-mcp.mjs                       # http://localhost:4127/mcp
 //   node scripts/verifier-mcp.mjs https://…/mcp         # un déploiement
 //   node scripts/verifier-mcp.mjs <url> --bavard        # affiche les réponses
 //
 // Rend 0 si tout répond sans erreur d'outil, 1 sinon.
-const url = process.argv.find((a) => /^https?:\/\//.test(a)) ?? 'http://localhost:3127/mcp';
+const url = process.argv.find((a) => /^https?:\/\//.test(a)) ?? 'http://localhost:4127/mcp';
 const bavard = process.argv.includes('--bavard');
 let id = 0;
 

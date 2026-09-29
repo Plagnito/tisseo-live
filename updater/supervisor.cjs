@@ -64,7 +64,7 @@ const CFG = {
   enabled: String(process.env.UPDATE_ENABLED || 'true') !== 'false',
   branch: (process.env.UPDATE_BRANCH || brancheDuClone() || 'main').trim(),
   intervalMin: Math.max(1, Number(process.env.UPDATE_INTERVAL_MIN) || 15),
-  port: Number(process.env.PORT) || 3127,
+  port: Number(process.env.PORT) || 4127,
 };
 
 function npmInstall() {

@@ -1,7 +1,7 @@
 # Restarts the Tisseo Live dev server in the background.
-#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart.ps1 [-Port 3127]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts\restart.ps1 [-Port 4127]
 # NOTE: ce fichier doit rester ASCII (PowerShell 5.1 lit les .ps1 en ANSI).
-param([int]$Port = 3127)
+param([int]$Port = 4127)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 

@@ -22,7 +22,7 @@ function loadPlaywright() {
 }
 
 const { chromium } = loadPlaywright();
-const URL = process.env.URL || 'http://localhost:3127/';
+const URL = process.env.URL || 'http://localhost:4127/';
 // Tous les hôtes listés dans lib/tiles.mjs : il suffit d'en oublier un pour
 // que le test passe à côté du but.
 const TILE_HOSTS = /cartocdn\.com|openstreetmap\.org|openstreetmap\.fr|opentopomap\.org|arcgisonline\.com/;
