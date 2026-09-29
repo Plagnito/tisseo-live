@@ -8,7 +8,24 @@ $root = Split-Path -Parent $PSScriptRoot
 $p = Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
   Where-Object { $_.ExecutablePath -like '*\nodejs\node.exe' -and $_.CommandLine -like '*server.mjs*' }
 foreach ($x in $p) { Stop-Process -Id $x.ProcessId -Force }
-Start-Sleep -Milliseconds 400
+
+# Attendre que le port soit vraiment libre. Sans cette attente, le nouveau
+# serveur part alors que l'ancien tient encore le port : il echoue en silence
+# (EADDRINUSE) et c'est l'ancien code, lance il y a des heures, qui continue
+# de repondre. C'est arrivE : deux corrections « sans effet » venaient de la.
+$deadline = (Get-Date).AddSeconds(15)
+while ((Get-Date) -lt $deadline) {
+  $libre = $true
+  try { $c = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop }
+  catch { $c = $null }
+  if ($c) { $libre = $false }
+  if ($libre) { break }
+  Start-Sleep -Milliseconds 250
+}
+if (-not $libre) {
+  "ATTENTION : le port $Port est encore occupe apres arret des processus connus."
+  "Relancez a la main si le serveur demarre mal."
+}
 
 $out = Join-Path $root 'server.out.log'
 $err = Join-Path $root 'server.err.log'

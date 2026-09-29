@@ -100,6 +100,27 @@ test('une correspondance reste possible quand elle le mérite', () => {
   assert.ok(r.legs.every((l) => l.type === 'ride' || l.type === 'walk'), 'types de segments connus');
 });
 
+test('déjà sur place : la marche gagne, pas un détour en transports', () => {
+  // Le cas rencontré en branchant le géocodeur : depuis la place Wilson, à
+  // 100 m de la station Jean Jaurès, le planificateur renvoyait « aucun
+  // itinéraire » — parce que départ et arrivée partagent un arrêt — puis passait
+  // à l'homonyme suivant, à 6 km, et proposait 58 minutes de métro et de bus.
+  const jj = model.stopClusters('Jean Jaurès', 4)[0];
+  const quai = jj.ids[0];
+  const s = stops[quai];
+  // Un point à 100 m du quai, donné en coordonnées.
+  const r = router.journey(
+    { lat: s.lat + 0.0009, lon: s.lon },
+    { stop_ids: jj.ids },
+    A_TRAFFIC,
+  );
+  assert.ok(!r.error, `pas de trajet : ${r.error}`);
+  assert.ok(r.legs.every((l) => l.type === 'walk'),
+    'on est déjà sur place : le trajet ne doit contenir que de la marche');
+  assert.ok(r.duration_s < 20 * 60,
+    `attendu moins de 20 min, obtenu ${Math.round(r.duration_s / 60)} min`);
+});
+
 test('le départ et l\'arrivée sur le même quai sont refusés', () => {
   const r = router.journey({ stop_id: 'stop_point:SP_1912' }, { stop_id: 'stop_point:SP_1912' }, A_TRAFFIC);
   assert.ok(r.error, 'un trajet vers soi-même ne doit pas être proposé');

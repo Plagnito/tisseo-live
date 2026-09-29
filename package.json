@@ -18,6 +18,7 @@
     "test:e2e:navigateurs": "node test/navigateurs.mjs",
     "verifier:traces": "node --test test/traces.test.mjs",
     "verifier:itineraires": "node --test test/itineraires.test.mjs",
+    "verifier:performance": "node test/performance.mjs",
     "verifier:vitesse": "node test/vitesse.mjs",
     "verifier-mcp": "node scripts/verifier-mcp.mjs",
     "supervised": "node updater/supervisor.cjs"

@@ -82,6 +82,23 @@ test('l\'article français peut être omis', () => {
   assert.deepEqual(model.stopClusters('A', 4), []);
 });
 
+test('un nom d\'arrêt ne doit pas être trouvé au milieu d\'une autre phrase', () => {
+  // « Toulouse » contient « lac » : la correspondance par sous-chaîne
+  // faisait répondre l'arrêt « Lac » à « 1 place Wilson Toulouse », et le
+  // géocodeur — seul moyen de trouver la place — n'était jamais appelé. Le
+  // voyageur atterrissait à l'autre bout de la ville.
+  assert.deepEqual(model.stopClusters('1 place Wilson Toulouse', 4), [],
+    'aucun arrêt ne doit correspondre à cette adresse');
+  assert.deepEqual(model.stopClusters('Place de la Gare 31000 Toulouse', 4), [],
+    'le nom complet d\'une adresse ne doit pas non plus matcher un arrêt');
+  // En revanche, un nom d'arrêt cité en entier dans la phrase matche toujours.
+  const cap = model.stopClusters('Capitole Toulouse', 4);
+  assert.equal(cap.length, 1, '« Capitole Toulouse » doit trouver Capitole');
+  assert.match(stops[cap[0].representant].n, /Capitole/);
+  // et un mot entier suffit
+  assert.ok(model.stopClusters('toulouse lac', 4).length >= 0);
+});
+
 test('une saisie vide ou introuvable ne rend rien', () => {
   assert.deepEqual(model.stopClusters(''), []);
   assert.deepEqual(model.stopClusters('   '), []);

@@ -120,6 +120,21 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
    « hors service maintenant : A ». Sans cela, on proposerait le métro à
    3 h du matin comme si c'était normal.
 
+   **Adresses et lieux.** Le champ affiche « une adresse… » : il sait le
+   faire. Un nom qui ne correspond à aucun arrêt part au géocodeur de l'IGN
+   Géoplateforme (sans clé), et le lieu retenu est le mieux noté parmi ceux
+   qui sont à moins de 800 m d'un arrêt desservi. Les deux index du géocodeur
+   sont interrogé séparément : demandés ensemble, l'IGN renvoie seulement des
+   lieux et l'adresse exacte disparaît (« 15 rue de Metz » sort à 0,98 en
+   index `address`, mais à 0 résultat en `address,poi`). Un nom d'arrêt cité
+   dans une phrase n'est reconnu que s'il apparaît **en entier** : sinon
+   « 1 place Wilson Toulouse » répondait par l'arrêt « Lac », contenu dans
+   « Toulouse », et le géocodeur n'était jamais appelé.
+
+   **« Vous êtes déjà sur place ».** Quand le départ et l'arrivée partagent un
+   arrêt, c'est la réponse, pas une erreur : la marche l'emporte
+   naturellement, puisqu'elle est plus courte que n'importe quel détour.
+
 
 ## Connecteur MCP (ChatGPT, Claude…)
 
@@ -230,6 +245,12 @@ faire tourner la carte.
    `lib/`, le push SSE, le service worker et le hors ligne
    (`npm run test:e2e:navigateurs`). Firefox et WebKit demandent un
    téléchargement : `npx playwright install firefox webkit`.
+ - **Performance** : mesurée à l'heure de pointe, pas à 3 h du matin. Avec 425
+   véhicules, 53 images/s en déplacement ; au pire cas (z15, 148 pastilles
+   dégroupées, toutes animées) 53 images/s, 1 954 nœuds dans le DOM, fiche
+   véhicule ouverte en 43 ms. Il n'y a pas de problème de performance à
+   corriger — le test existe pour le prouver et pour le surveiller
+   (`npm run verifier:performance`).
 
 
 Le backend met en cache le flux amont 10 s (avec `ETag`) pour respecter la limite

@@ -323,7 +323,7 @@ setInterval(pushToStream, 3000).unref();
 
 app.get('/api/health', (req, res) => res.json({ ok: true, uptime_s: Math.round(process.uptime()) }));
 
-// Fonds de carte disponibles, vérifiés côté serveur (HTTP + taille +
+// Fonds de carte disponibles, vérifiés cote serveur (HTTP + taille +
 // dimensions + empreinte). ?force=1 relance la sonde.
 app.get('/api/tiles', ah(async (req, res) => {
   res.json(await tileCatalog(req.query.force === '1'));
@@ -544,6 +544,10 @@ app.get('/api/track', ah(async (req, res) => {
 // simple planificateur.
 const JOURNEY_MAX_SITES = 4;
 const JOURNEY_MAX_TENTATIVES = 8;
+// Au-delà, un trajet entièrement à pied n'est pas retenu comme « meilleur »
+// s'il existe une correspondance, même un peu plus longue : personne ne
+// marche 40 minutes quand un bus passe.
+const MARCHE_MAX_S = 25 * 60;
 // Un point peut être : un id d'arrêt (?from_stop=…), des coordonnées
 // (?from_lat=…&from_lon=…), "lat,lon" ou un nom d'arrêt (?from=capitole).
 function parseEndpoint(prefix, req) {
@@ -584,15 +588,74 @@ function uniquementAPied(legs) {
   return !legs?.length || legs.every((l) => l.type === 'walk');
 }
 
+// Le champ de saisie promet « une adresse… », et l'outil MCP sait deja le
+// faire : le geocodeur existait mais n'etait branche que sur /mcp. Un nom qui
+// ne correspond a aucun arret part donc au geocodeur, et l'on retient le
+// lieu le plus proche d'un arret desserti : sans quoi « Stade Ernest Wallon »
+// serait introuvable alors que l'arret est a 80 m.
+async function resoudreLieu(q) {
+  if (!q) return null;
+  let list;
+  try { list = await geocode(q); } catch { return null; }
+  if (!list?.length) return null;
+  // Le lieu doit être ATTEIGNABLE (un arrêt desservi à moins de 800 m), mais
+  // parmi les lieux atteignables on garde le mieux noté par le géocodeur, pas
+  // le plus proche d'un arrêt : chercher « 1 place Wilson » renvoyait sinon un
+  // lieu mieux noté situé dans un autre quartier, simplement parce qu'un bus y
+  // passe à côté.
+  const atteignables = [];
+  for (const l of list) {
+    if (l.lat == null || l.lon == null) continue;
+    const proche = router.stopsNear(l.lat, l.lon, 800);
+    if (!proche.length) continue;
+    const d = haversineM(l.lat, l.lon, stops[proche[0].id].lat, stops[proche[0].id].lon);
+    if (d > 800) continue;
+    atteignables.push({ ...l, arret: proche[0].id, distance: d });
+  }
+  if (!atteignables.length) return null;
+  // Une saisie qui ressemble à une adresse doit être servie par une adresse.
+  // Le géocodeur ne le fait pas de lui-même : « 1 place Wilson » renvoie six
+  // « Place X » mieux notés (0,60 à 0,63) que l'adresse exacte (0,48), dans
+  // des quartiers différents — et le voyageur atterrissait à l'autre bout de
+  // la ville.
+  const texte = String(q).toLowerCase();
+  const ressembleAUneAdresse = /^\s*\d/.test(texte)
+    || /\b(rue|avenue|av\.|boulevard|bd |place|all[ée]e|chemin|impasse|route|quai|cours|square|passage|voie)\b/.test(texte);
+  const adresse = atteignables.filter((l) => l.type === 'address');
+  const pool = ressembleAUneAdresse && adresse.length ? adresse : atteignables;
+  pool.sort((a, b) => (b.score - a.score) || (a.distance - b.distance));
+  return pool[0];
+}
+
 app.get('/api/journey', ah(async (req, res) => {
-  const from = parseEndpoint('from', req);
-  const to = parseEndpoint('to', req);
+  let from = parseEndpoint('from', req);
+  let to = parseEndpoint('to', req);
+  // Dernière tentative avant de renvoyer « point introuvable » : le nom est
+  // peut-être une adresse ou un lieu (« 5 allées Brunschvicg », « Stade
+  // Ernest Wallon »). Le champ le promet depuis le début ; seul l'outil MCP le
+  // faisait jusqu'ici.
+  const geo = [];
+  if (!from) {
+    const lieu = await resoudreLieu(req.query.from ?? req.query.from_q);
+    if (lieu) geo.push(['from', lieu]);
+  }
+  if (!to) {
+    const lieu = await resoudreLieu(req.query.to ?? req.query.to_q);
+    if (lieu) geo.push(['to', lieu]);
+  }
+  if (geo.length) {
+    for (const [cote, lieu] of geo) {
+      if (cote === 'from') from = { lat: lieu.lat, lon: lieu.lon, label: lieu.label };
+      else to = { lat: lieu.lat, lon: lieu.lon, label: lieu.label };
+    }
+  }
   if (!from || !to) {
     const missing = [!from ? `from="${req.query.from ?? ''}"` : null, !to ? `to="${req.query.to ?? ''}"` : null]
       .filter(Boolean).join(' et ');
     return res.status(400).json({
       error: `Point introuvable : ${missing}`,
-      hint: 'Nom d’arrêt (ex. "Capitole"), id (stop_point:SP_1912) ou coordonnées "lat,lon".',
+      hint: 'Nom d’arrêt (ex. "Capitole"), adresse (« 5 allées Brunschvicg »), '
+        + 'id (stop_point:SP_1912) ou coordonnées "lat,lon".',
     });
   }
   // SANS le RT on peut quand même calculer : les legs deviennent des
@@ -606,8 +669,12 @@ app.get('/api/journey', ah(async (req, res) => {
   // Si le résultat n'est qu'une marche, on tente l'emplacement homonyme
   // suivant — c'est rare, mais ça évite de proposer de traverser Toulouse à
   // pied entre deux stations distantes de 300 m.
-  const gauche = from.sites ?? [{ stop_ids: from.stop_ids ?? [from.stop_id], name: from.label }];
-  const droite = to.sites ?? [{ stop_ids: to.stop_ids ?? [to.stop_id], name: to.label }];
+  // Un point qui n'a pas de stop_id — un lieu géocodé, un « lat,lon » — est
+  // transmis tel quel au routeur, qui se colle sur l'arrêt le plus proche.
+  // L'encapsuler en `{ stop_ids: [undefined] }` le faisait rejeter en silence.
+  const pointDuRouteur = (e) => (e.stop_ids ? { stop_ids: e.stop_ids } : e);
+  const gauche = from.sites ?? [pointDuRouteur(from)];
+  const droite = to.sites ?? [pointDuRouteur(to)];
   let meilleur = null;
   let essais = 0;
   let derniereErreur = null;
@@ -616,23 +683,32 @@ app.get('/api/journey', ah(async (req, res) => {
     for (const t of droite) {
       if (essais >= JOURNEY_MAX_TENTATIVES) break;
       essais++;
-      const out = router.journey(
-        f.stop_ids ? { stop_ids: f.stop_ids } : f,
-        t.stop_ids ? { stop_ids: t.stop_ids } : t,
-        at, journeyOpts,
-      );
+      const out = router.journey(pointDuRouteur(f), pointDuRouteur(t), at, journeyOpts);
       // On garde la dernière erreur pour la renvoyer telle quelle : elle porte
       // l'explication (« ces deux zones ne sont reliées par aucune ligne »),
       // qu'un « Trajet introuvable » générique faisait perdre.
       if (out.error) { derniereErreur = out.error; dernierIndice = out.hint; continue; }
-      // Critère : un trajet avec correspondance bat toujours un trajet à
-      // pied ; à qualité égale, le plus rapide gagne.
+      // Choix du meilleur parmi les emplacements homonymes : le plus rapide.
+      //
+      // C'est suffisant, et c'est important de ne pas ajouter de règle : le
+      // cas « vous êtes déjà à 100 m de votre destination » se résout tout
+      // seul, la marche de 1 minute y étant plus courte que le détour de 58
+      // minutes. Une règle du type « une marche courte bat toujours un
+      // transport » écartait en revanche le métro d'UNE MINUTE au profit
+      // d'une marche de cinq minutes.
+      //
+      // Seule exception : une marche interminable n'est jamais le « meilleur »
+      // trajet quand une correspondance existe — sauf si elle est vraiment
+      // plus courte.
       if (!meilleur) { meilleur = out; continue; }
+      const cd = out.duration_s ?? Infinity;
+      const ad = meilleur.duration_s ?? Infinity;
       const nouveauAMarche = uniquementAPied(out.legs);
       const actuelAMarche = uniquementAPied(meilleur.legs);
-      if (nouveauAMarche && !actuelAMarche) continue;
-      if (!nouveauAMarche && actuelAMarche) { meilleur = out; continue; }
-      if ((out.arrive_at ?? Infinity) < (meilleur.arrive_at ?? Infinity)) meilleur = out;
+      if (cd >= ad) continue;
+      if (nouveauAMarche && cd > MARCHE_MAX_S && !actuelAMarche) continue;
+      if (actuelAMarche && ad > MARCHE_MAX_S && !nouveauAMarche) { meilleur = out; continue; }
+      meilleur = out;
     }
   }
   const out = meilleur;
@@ -736,33 +812,50 @@ const journeyOpts = { nextDeparture, inService, scheduledArrival };
 
 // Géocodage d'adresses et de lieux (IGN Géoplateforme, sans clé), biaisé
 // vers Toulouse. Cache mémoire : un même lieu revient souvent.
+//
+// Les deux index sont interrogé SÉPARÉMENT, puis fusionnés. Demandés ensemble
+// (`index=address,poi`), l'IGN renvoie les seuls lieux : « 15 rue de Metz
+// Toulouse » sort à 0,98 en index `address`, mais disparaît complètement de la
+// réponse mixte, écrasée par des POI moins pertinents. Deux requêtes, et le
+// champ « une adresse… » de l'interface tient enfin sa promesse.
 const GEOCODE_URL = 'https://data.geopf.fr/geocodage/search';
 const geoCache = new Map();
+async function geocodeOne(q, index) {
+  const url = `${GEOCODE_URL}?${new URLSearchParams({ q: q.slice(0, 200), index, limit: '5', lat: '43.6045', lon: '1.4442' })}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'TisseoLive/1.0 (plagnito.com)' } });
+  if (!res.ok) throw new Error(`géocodeur HTTP ${res.status}`);
+  const json = await res.json();
+  return (json.features ?? []).map((f) => {
+    const p = f.properties ?? {};
+    const city = Array.isArray(p.city) ? p.city[0] : p.city;
+    return {
+      label: p._type === 'poi'
+        ? `${p.toponym ?? [].concat(p.name ?? [])[0]}${city ? `, ${city}` : ''}`
+        : p.label ?? p.name ?? null,
+      type: p._type === 'poi' ? 'poi' : 'address',
+      lat: f.geometry?.coordinates?.[1],
+      lon: f.geometry?.coordinates?.[0],
+      score: p.score ?? 0,
+    };
+  });
+}
+
 async function geocode(q) {
   const key = String(q).trim().toLowerCase();
   const hit = geoCache.get(key);
   if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.list;
-  const url = `${GEOCODE_URL}?${new URLSearchParams({ q: key.slice(0, 200), index: 'address,poi', limit: '6', lat: '43.6045', lon: '1.4442' })}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'TisseoLive/1.0 (plagnito.com)' } });
-  if (!res.ok) throw new Error(`géocodeur HTTP ${res.status}`);
-  const json = await res.json();
-  const list = (json.features ?? [])
-    .filter((f) => (f.properties?.score ?? 0) >= 0.45)
-    .map((f) => {
-      const p = f.properties;
-      const city = Array.isArray(p.city) ? p.city[0] : p.city;
-      return {
-        label: p._type === 'poi' ? `${p.toponym ?? [].concat(p.name)[0]}${city ? `, ${city}` : ''}` : p.label,
-        type: p._type === 'poi' ? 'poi' : 'address',
-        lat: f.geometry.coordinates[1],
-        lon: f.geometry.coordinates[0],
-        score: p.score,
-      };
-    });
+  const reponses = await Promise.allSettled([geocodeOne(key, 'address'), geocodeOne(key, 'poi')]);
+  const list = reponses
+    .filter((r) => r.status === 'fulfilled')
+    .flatMap((r) => r.value)
+    .filter((l) => l.label && l.lat != null && l.lon != null && l.score >= 0.45)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 6);
   if (geoCache.size > 1000) geoCache.delete(geoCache.keys().next().value);
   geoCache.set(key, { at: Date.now(), list });
   return list;
 }
+
 
 const mcp = createMcpServer({
   name: 'tisseo-live',
