@@ -51,6 +51,10 @@ const CAS = [
   ['tarifs', { ligne: 'AERO' }],
   ['search', { query: 'Jean Jaurès' }],
   ['fetch', { id: 'ligne:line:61' }],
+  ['prochains_passages', { arret: 'La Vache', ligne: 'L10', direction: 'Fenouillet', nombre: 3 }],
+  ['prochains_passages_vers', { depart: 'La Vache', arrivee: 'Fenouillet Ctre Cial' }],
+  ['prochains_passages_vers', { depart: 'Capitole', arrivee: 'Basso Cambo' }],
+  ['trajet_maintenant', { depart: 'Gare Matabiau', arrivee: 'Université Paul Sabatier' }],
 ];
 
 let echecs = 0;
@@ -74,8 +78,8 @@ for (const [name, args] of CAS) {
       continue;
     }
     const s = r.structuredContent;
-    const resume = s.total ?? s.passages?.length ?? s.etapes?.length ?? s.arrets?.length ?? s.lignes?.length ?? '';
-    const extra = name === 'itineraire' ? ` ${s.depart.nom} → ${s.arrivee.nom}, ${s.duree_min} min, ${s.etapes.filter((e) => e.type === 'trajet').map((e) => e.ligne).join(' + ')}` : '';
+    const resume = s.resume ?? s.total ?? s.passages?.length ?? s.etapes?.length ?? s.arrets?.length ?? s.lignes?.length ?? '';
+    const extra = name === 'itineraire' && !s.resume ? ` ${s.depart.nom} → ${s.arrivee.nom}, ${s.duree_min} min, ${s.etapes.filter((e) => e.type === 'trajet').map((e) => e.ligne).join(' + ')}` : '';
     console.log(`✓ ${name} ${JSON.stringify(args)} (${ms} ms) ${resume}${extra}`);
     if (bavard) console.log(JSON.stringify(s, null, 1).slice(0, 3000));
   } catch (err) {
