@@ -610,6 +610,8 @@ app.get('/api/journey', ah(async (req, res) => {
   const droite = to.sites ?? [{ stop_ids: to.stop_ids ?? [to.stop_id], name: to.label }];
   let meilleur = null;
   let essais = 0;
+  let derniereErreur = null;
+  let dernierIndice = null;
   for (const f of gauche) {
     for (const t of droite) {
       if (essais >= JOURNEY_MAX_TENTATIVES) break;
@@ -619,7 +621,10 @@ app.get('/api/journey', ah(async (req, res) => {
         t.stop_ids ? { stop_ids: t.stop_ids } : t,
         at, journeyOpts,
       );
-      if (out.error) continue;
+      // On garde la dernière erreur pour la renvoyer telle quelle : elle porte
+      // l'explication (« ces deux zones ne sont reliées par aucune ligne »),
+      // qu'un « Trajet introuvable » générique faisait perdre.
+      if (out.error) { derniereErreur = out.error; dernierIndice = out.hint; continue; }
       // Critère : un trajet avec correspondance bat toujours un trajet à
       // pied ; à qualité égale, le plus rapide gagne.
       if (!meilleur) { meilleur = out; continue; }
@@ -633,10 +638,12 @@ app.get('/api/journey', ah(async (req, res) => {
   const out = meilleur;
   if (!out) {
     return res.status(422).json({
-      error: 'Trajet introuvable',
+      // Le message du routeur vaut mieux que le nôtre : il explique POURQUOI
+      // (zones non reliées par les horaires, plutôt qu'une panne).
+      error: derniereErreur || 'Trajet introuvable',
       from: from.label,
       to: to.label,
-      hint: 'Essayez un nom d\'arrêt plus précis, ou des coordonnées "lat,lon".',
+      hint: dernierIndice || 'Essayez un nom d\'arrêt plus précis, ou des coordonnées "lat,lon".',
     });
   }
   // On dit quel emplacement a été retenu quand il y en avait plusieurs : le

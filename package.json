@@ -15,6 +15,7 @@
     "test:e2e:live": "node test/e2e-live.mjs",
     "test:e2e:hors-ligne": "node test/hors-ligne.mjs",
     "verifier:traces": "node --test test/traces.test.mjs",
+    "verifier:itineraires": "node --test test/itineraires.test.mjs",
     "verifier:vitesse": "node test/vitesse.mjs",
     "verifier-mcp": "node scripts/verifier-mcp.mjs",
     "supervised": "node updater/supervisor.cjs"

@@ -106,6 +106,20 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
    quels emplacements ont été écartés : on ne renvoie pas « Jean Jaurès » sans
    dire lequel.
 
+   **Le réseau n'est pas d'un seul tenant.** Les horaires publiés se décomposent
+   en 12 composantes : la principale (3 629 arrêts) et 11 îlots représentant
+   156 arrêts — 4 % du réseau, à Lacassagne, Lévignac, Mérenvielle… Aucune
+   ligne ne les relie au reste, donc aucun trajet n'existe depuis ou vers ces
+   là. L'interface le dit au lieu d'afficher une panne. Un test
+   (`test/itineraires.test.mjs`) suit ce découpage : un rafraîchissement des
+   données qui aggrave le morcellement se voit immédiatement.
+
+   **La nuit, rien ne circule.** Le routeur préfère alors proposer un trajet
+   théorique sur le réseau entier plutôt que de ne rien proposer — mais il
+   nomme les lignes hors service (`out_of_service`), et l'interface affiche
+   « hors service maintenant : A ». Sans cela, on proposerait le métro à
+   3 h du matin comme si c'était normal.
+
 
 ## Connecteur MCP (ChatGPT, Claude…)
 
@@ -213,10 +227,11 @@ de charge, et ressert les dernières données connues en cas de coupure (flag `s
 ## Tests
 
 ```powershell
-npm test        # 154 tests unitaires (node:test) : géométrie, interpolation
+npm test        # 161 tests unitaires (node:test) : géométrie, interpolation
                 # sur le tracé, mouvement des pastilles, choix du sens d'une
-                # ligne, véhicules théoriques, recherche d'arrêts et
-                # itinéraires, qualité des tracés, fonds de carte, connecteur MCP
+                # ligne, véhicules théoriques, recherche d'arrêts,
+                # itinéraires (balayage de 120 trajets), qualité des tracés,
+                # fonds de carte, connecteur MCP
 npm start       # dans un terminal…
 npm run test:e2e              # carte réelle + repli mode tracés sans tuiles
 npm run test:e2e:itineraire   # clic véhicule → itinéraire, fluidité, suivi
@@ -232,6 +247,12 @@ Les tests `e2e` ont besoin de Playwright (installé à part, `npm i -D playwrigh
 ```powershell
 node --test test/traces.test.mjs   # chaque arrêt est-il bien sur le tracé de sa ligne ?
 node test/vitesse.mjs              # vitesse mesurée affichée (serveur forcé à une heure de trafic)
+```
+
+Pour un balayage de routage approfondi (800 trajets au lieu de 120, ~2 min) :
+
+```powershell
+$env:BALAYAGE = 800; npm run verifier:itineraires
 ```
 
 ## Régénérer les données statiques

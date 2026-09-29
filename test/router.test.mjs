@@ -110,6 +110,37 @@ test('un point inconnu est signalé, pas deviné', () => {
   assert.ok(r.error, 'un stop_id inconnu doit produire une erreur');
 });
 
+test('un trajet qui n\'existe qu\'hors service est signalé comme tel', () => {
+  // La nuit, si rien ne circule, le routeur propose quand même un trajet sur le
+  // réseau entier plutôt que de ne rien proposer. Il doit alors NOMMER les
+  // lignes qui ne roulent pas, parce que l'interface affiche exactement ce
+  // champ. Il émettait `out_of_service: true` (booléen) alors que le client
+  // fait `out_of_service.map((r) => r.line)` : l'avertissement était perdu en
+  // silence, et l'app proposait le métro à 3 h du matin comme si c'était
+  // normal.
+  const rienNeRoule = () => false;
+  const r = router.journey({ stop_id: 'stop_point:SP_1912' }, { stop_id: 'stop_point:SP_3055' },
+    A_TRAFFIC, { inService: rienNeRoule });
+  assert.ok(!r.error, `pas de trajet : ${r.error}`);
+  assert.ok(Array.isArray(r.out_of_service),
+    `out_of_service doit être un tableau de lignes nommées, obtenu ${JSON.stringify(r.out_of_service)}`);
+  assert.ok(r.out_of_service.length > 0, 'la liste des lignes hors service ne peut pas être vide');
+  for (const l of r.out_of_service) {
+    assert.ok(l.line, 'chaque ligne hors service est nommée');
+    assert.ok(l.route_id, 'chaque ligne hors service garde son identifiant');
+  }
+  // et le format est directement exploitable par l'interface
+  const message = 'hors service maintenant : ' + r.out_of_service.map((x) => x.line).join(', ');
+  assert.match(message, /hors service maintenant : \S/);
+});
+
+test('un trajet normal ne porte pas d\'avertissement hors service', () => {
+  const r = router.journey({ stop_id: 'stop_point:SP_2757' }, { stop_id: 'stop_point:SP_1572' }, A_TRAFFIC);
+  assert.ok(!r.error, `pas de trajet : ${r.error}`);
+  assert.equal(r.out_of_service, undefined,
+    'rien à signaler quand les lignes roulent réellement');
+});
+
 test('l\'attente reste bornée par le mode du véhicule', () => {
   // Contre-régression : si l'attente d'un bus était ramenée à celle d'un
   // métro (120 s), le planificateur proposerait un bus toutes les 30 min pour

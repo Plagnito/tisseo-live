@@ -1048,8 +1048,13 @@ function renderJourney() {
   const legs = journey.legs || [];
   const warnings = [];
   if (journey.estimates) warnings.push('horaires estimés : le temps réel ne couvre pas toutes les lignes');
-  if (journey.out_of_service?.length) {
-    warnings.push('hors service maintenant : ' + journey.out_of_service.map((r) => r.line).join(', '));
+  if ('out_of_service' in journey) {
+    // Liste vide = aucune ligne ne circule à cette heure : le trajet affiché
+    // est un trajet théorique, pas un trajet possible maintenant.
+    const l = journey.out_of_service || [];
+    warnings.push(l.length
+      ? 'hors service maintenant : ' + l.map((r) => r.line).join(', ')
+      : 'aucune ligne ne circule à cette heure — trajet théorique');
   }
   setHtml(box,
     `<div class="jhead"><b>${Math.round((journey.duration_s || 0) / 60)} min</b>` +

@@ -259,7 +259,14 @@ test('router : une ligne hors service est écartée, avec repli si plus rien ne 
   assert.equal(lineOf(sansRapide), 'S');
   assert.equal(sansRapide.out_of_service, undefined);
   const nuit = router.journey(from, to, 1000, { inService: () => false });
-  assert.equal(nuit.out_of_service, true, 'repli signalé');
+  // Le repli est signalé par la LISTE des lignes qui ne roulent pas, pas par un
+  // booléen : l'interface fait `out_of_service.map((r) => r.line)` pour nommer
+  // celles qu'il ne faut pas prendre. Un booléen faisait disparaître
+  // l'avertissement en silence.
+  assert.ok(Array.isArray(nuit.out_of_service), 'repli signalé par une liste de lignes');
+  assert.ok(nuit.out_of_service.some((l) => l.line === 'R' || l.line === 'S'),
+    'la ligne empruntée figure dans la liste des lignes hors service');
+  for (const l of nuit.out_of_service) assert.ok(l.line, 'chaque ligne est nommée');
   const attente = router.journey(from, to, 1000, { nextDeparture: () => 1600 });
   assert.equal(attente.legs[0].depart, 1600);
   assert.equal(attente.legs[0].scheduled, true);
