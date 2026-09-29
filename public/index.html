@@ -129,6 +129,21 @@ __cssChain([
 <script>if (window.L && !L.markerClusterGroup) { document.write('<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"><\/script>'); }</script>
 <script>if (window.L && !L.markerClusterGroup) { document.write('<script src="https://cdn.jsdelivr.net/npm/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"><\/script>'); }</script>
 <script>if (window.L && !L.markerClusterGroup) { document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/leaflet.markercluster.js"><\/script>'); }</script>
+<script>
+  // app.js est un script classique : il s'exécute avant les modules. On lui
+  // fournit donc une promesse à awaiter au démarrage.
+  window.tisseoLibReady = new Promise((r) => window.addEventListener('tisseo:lib', r));
+</script>
+<script type="module">
+  // Pont vers la logique pure partagée avec les tests unitaires : le front
+  // importe exactement le code que couvre `npm test`, au lieu d'une recopie
+  // qui diverge en silence.
+  import * as M from '/lib/motion.mjs';
+  import * as IT from '/lib/itinerary.mjs';
+  window.M = M;
+  window.IT = IT;
+  window.dispatchEvent(new Event('tisseo:lib'));
+</script>
 <script src="app.js"></script>
 </body>
 </html>

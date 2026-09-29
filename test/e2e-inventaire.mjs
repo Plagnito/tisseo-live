@@ -38,15 +38,25 @@ const invVeh = await page.evaluate(() => {
     visible: !box.classList.contains('hidden'),
     titre: box.querySelector('h3')?.textContent,
     lignes: box.querySelectorAll('li.inv').length,
+    sansEtiquette: [...box.querySelectorAll('li.inv b')].filter((e) => !e.textContent.trim()).length,
     avecPosition: [...box.querySelectorAll('li.inv .pos')].every((e) => /-?\d+\.\d{5}, -?\d+\.\d{5}/.test(e.textContent)),
+    vitesses: [...box.querySelectorAll('li.inv .spd')].map((e) => e.textContent.trim()),
     chipOn: document.getElementById('statVehiclesBtn').classList.contains('on'),
   };
 });
 ok(invVeh.visible, 'panneau « véhicules » ouvert au clic sur le compteur');
 ok(/véhicule/.test(invVeh.titre || ''), `titre : « ${invVeh.titre} »`);
 ok(invVeh.lignes > 10, `véhicules listés (${invVeh.lignes})`);
+// Régression : un TripUpdate sans route_id (vu en vrai sur le bus
+// « Lycée Toulouse-Lautrec ») faisait planter le tri et vidait le panneau
+// entier d'un clic.
+ok(invVeh.sansEtiquette === 0, `aucune ligne vide dans la liste (${invVeh.sansEtiquette})`);
 ok(invVeh.avecPosition, 'chaque véhicule affiche ses coordonnées');
 ok(invVeh.chipOn, 'le compteur est marqué actif');
+// La vitesse vient de la mesure côté client, pas de l'API : au moins une
+// ligne doit afficher un nombre ou « à l'arrêt », jamais une cellule vide.
+const avecVitesse = invVeh.vitesses.filter((s) => s && s !== '—').length;
+ok(avecVitesse > 0, `vitesse mesurée affichée (${avecVitesse}/${invVeh.vitesses.length} lignes : ${invVeh.vitesses.slice(0, 4).join(', ')})`);
 await page.screenshot({ path: shot('inventaire-vehicules') });
 console.log(`     capture : ${shot('inventaire-vehicules')}`);
 

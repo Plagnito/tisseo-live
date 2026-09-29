@@ -56,6 +56,8 @@ async function probe(label, { blockTiles = false, clickMapButton = false, wait =
 
   const info = await page.evaluate(() => ({
     leaflet: typeof window.L !== 'undefined',
+    libM: typeof window.M?.predict === 'function' && typeof window.M.smoothSpeed === 'function',
+    libIt: typeof window.IT?.pickVariantForVehicle === 'function',
     notiles: document.getElementById('map').classList.contains('notiles'),
     tuiles: document.querySelectorAll('.leaflet-tile-loaded').length,
     sources: [...new Set([...document.querySelectorAll('.leaflet-tile')].map((t) => t.src.split('/')[2]))],
@@ -75,6 +77,10 @@ async function probe(label, { blockTiles = false, clickMapButton = false, wait =
 // 1. Fond de carte réel : des tuiles chargées, et surtout pas un placeholder.
 const carte = await probe('a-carte');
 ok(carte.leaflet, 'Leaflet chargé depuis public/vendor');
+// Si le pont vers lib/ est cassé, la carte se fige sans lever d'erreur
+// visible : c'est le genre de panne qu'on ne voit qu'en regardant l'écran.
+ok(carte.libM, 'logique de mouvement partagée chargée depuis lib/motion.mjs');
+ok(carte.libIt, 'choix du sens partagé chargé depuis lib/itinerary.mjs');
 ok(carte.tuiles > 4, `des tuiles chargées (${carte.tuiles})`);
 // Combien de véhicules le flux annonce-t-il à cet instant ? Le nombre
 // varie selon l'heure (le réseau est quasi vide la nuit) : on compare donc

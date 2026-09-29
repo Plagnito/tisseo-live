@@ -541,16 +541,39 @@ function closeInventory() {
   $('statLinesBtn').classList.remove('on');
 }
 
+// Vitesse réellement mesurée du véhicule, en km/h.
+//
+// Elle ne vient pas de l'API : le flux RT ne publie pas de vitesse. C'est
+// celle que le client déduit des positions successives (lissée dans
+// setMarkerFix), donc elle n'existe que sur un véhicule déjà suivi. Les
+// véhicules théoriques n'en ont pas : leurs positions sont extrapolées, pas
+// observées, et afficher une vitesse Revenus serait un mensonge.
+function vehicleSpeedKmh(v) {
+  if (v.theoretical) return null;
+  const s = markers.get(vKey(v))?.__speed;
+  if (s == null || !Number.isFinite(s) || s < 0.15) return 0; // à l'arrêt
+  return s * 3.6;
+}
+
+function speedText(kmh) {
+  if (kmh == null) return '';
+  return kmh === 0 ? 'à l\'arrêt' : `${Math.round(kmh)} km/h`;
+}
+
 function vehicleRowHtml(v) {
-  const speed = v.speed_kmh != null ? Math.round(v.speed_kmh) + ' km/h' : '';
   return `<li class="inv" data-veh="${escapeHtml(vKey(v))}">` +
     `<span class="past" style="background:#${v.color}"></span>` +
-    `<b>${escapeHtml(v.line)}</b>` +
+    `<b${v.route_unknown ? ' title="Tisséo ne publie pas de ligne pour ce véhicule"' : ''}>${escapeHtml(v.line || 'sans ligne')}</b>` +
     `<span class="dest">→ ${escapeHtml(v.destination || '')}</span>` +
     `<small>${v.theoretical ? 'théorique · ' : ''}${escapeHtml(v.next_stop || v.at_stop || '')}</small>` +
     `<span class="pos" title="Position estimée">${v.lat.toFixed(5)}, ${v.lon.toFixed(5)}</span>` +
-    `<span class="spd">${speed}</span></li>`;
+    `<span class="spd">${speedText(vehicleSpeedKmh(v))}</span></li>`;
 }
+
+// Tri tolérant : une seule ligne incomplète ne doit pas vider tout le
+// panneau. On compare des chaînes obtenues par String(), jamais la méthode
+// d'un objet qui pourrait manquer.
+const cmpFr = (a, b) => String(a ?? '').localeCompare(String(b ?? ''), 'fr');
 
 function renderInventory() {
   const box = $('inventory');
@@ -566,12 +589,12 @@ function renderInventory() {
       title = `Ligne ${r?.short_name ?? view.routeId} — ${items.length} véhicule${items.length > 1 ? 's' : ''}`;
     } else {
       // Toutes les lignes confondues, triées par ligne puis par destination.
-      items = [...vis].sort((a, b) => a.line.localeCompare(b.line, 'fr') || a.destination.localeCompare(b.destination, 'fr'));
+      items = [...vis].sort((a, b) => cmpFr(a.line, b.line) || cmpFr(a.destination, b.destination));
       const lines = new Set(vis.map((v) => v.route_id));
       title = `Toutes les lignes — ${lines.size} ligne${lines.size > 1 ? 's' : ''}, ${vis.length} véhicules`;
     }
   } else {
-    items = [...vis].sort((a, b) => a.route_id.localeCompare(b.route_id) || a.line.localeCompare(b.line, 'fr'));
+    items = [...vis].sort((a, b) => cmpFr(a.route_id, b.route_id) || cmpFr(a.line, b.line));
     title = `${vis.length} véhicule${vis.length > 1 ? 's' : ''} en service`;
   }
   const shown = items.slice(0, INVENTORY_PAGE);
@@ -687,19 +710,14 @@ function paintPill(m, v, dimmed, selected, alertOn) {
 // mesure la vitesse réelle (distance / temps), on la lisse, et la pastille
 // avance en continu à cette vitesse entre deux points. Une nouvelle mesure
 // ne fait que corriger la trajectoire — plus de redémarrage visible.
-const M_PER_DEG_LAT = 110540;
+//
+// Les calculs sont dans lib/motion.mjs, importés par le pont en tête de page
+// et couverts par `npm test`. Ici on ne garde que la partie Leaflet.
 const FOLLOW_MS = 200; // rythme du recentrage en mode « suivre »
 const SPEED_ALPHA = 0.35; // lissage exponentiel de la vitesse
 const MIN_MOVE_MS = 1500; // en dessous, le saut est du bruit : on ignore
 let motionFrame = null, lastFollow = 0, selfPan = false;
 const moving = new Set();
-
-function metresBetween(a, b) {
-  const kx = M_PER_DEG_LAT * Math.cos((a.lat * Math.PI) / 180);
-  const dy = (b.lat - a.lat) * M_PER_DEG_LAT;
-  const dx = (b.lng - a.lng) * kx;
-  return Math.hypot(dx, dy);
-}
 
 function setMarkerFix(m, lat, lon) {
   const now = performance.now();
@@ -707,15 +725,19 @@ function setMarkerFix(m, lat, lon) {
   const prevFix = m.__fix;
   const prevAt = m.__fixAt;
   if (prevFix && prevAt != null) {
-    const dt = now - prevAt;
-    const d = metresBetween(prevFix, fix);
-    if (dt >= MIN_MOVE_MS) {
-      const inst = d / (dt / 1000);
-      // Vitesse lissée : une valeur isolée aberrante ne doit pas faire
-      // bondir la pastille, et un arrêt franc doit la ramener à zéro.
-      m.__speed = m.__speed == null ? inst : m.__speed + (inst - m.__speed) * SPEED_ALPHA;
-    }
-    if (d > 5) m.__bearing = bearingDeg(prevFix, fix);
+    // La mesure elle-même est déléguée à lib/motion.mjs : c'est elle qui
+    // écarte les sauts trop rapprochés (bruit) et les vitesses impossibles.
+    // Recalculée ici à la main, elle laissait passer des bonds de plusieurs
+    // kilomètres d'une position à l'autre — 161 km/h affichés sur un bus
+    // dans l'inventaire.
+    const inst = M.observedSpeed(
+      { lat: prevFix.lat, lng: prevFix.lng, atMs: prevAt },
+      { lat: fix.lat, lng: fix.lng, atMs: now },
+      MIN_MOVE_MS,
+    );
+    if (inst != null) m.__speed = M.smoothSpeed(m.__speed, inst, SPEED_ALPHA);
+    const d = M.metresBetween(prevFix, fix);
+    if (d > 5) m.__bearing = M.bearingBetween(prevFix, fix);
   }
   m.__fix = fix;
   m.__fixAt = now;
@@ -733,23 +755,14 @@ function setMarkerFix(m, lat, lon) {
 function predict(m, now) {
   const fix = m.__fix;
   if (!fix || m.__fixAt == null) return m.__target || m.getLatLng();
-  const v = m.__speed || 0;
-  if (v <= 0.05) return fix;
-  const dt = Math.min(Math.max((now - m.__fixAt) / 1000, 0), 8); // au-delà, on ne devine plus
-  const d = v * dt;
-  if (d < 1) return fix;
-  const bearing = m.__paint?.[0]?.bearing ?? m.__bearing ?? 0;
-  const rad = (bearing * Math.PI) / 180;
-  const kx = M_PER_DEG_LAT * Math.cos((fix.lat * Math.PI) / 180);
-  return L.latLng(fix.lat + (Math.cos(rad) * d) / M_PER_DEG_LAT, fix.lng + (Math.sin(rad) * d) / kx);
-}
-
-function bearingDeg(a, b) {
-  const toRad = (d) => (d * Math.PI) / 180;
-  const y = Math.sin(toRad(b.lng - a.lng)) * Math.cos(toRad(b.lat));
-  const x = Math.cos(toRad(a.lat)) * Math.sin(toRad(b.lat))
-    - Math.sin(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.cos(toRad(b.lng - a.lng));
-  return (Math.atan2(y, x) * 180) / Math.PI;
+  const p = M.predict({
+    fix,
+    fixAtMs: m.__fixAt,
+    speed: m.__speed || 0,
+    bearing: m.__paint?.[0]?.bearing ?? m.__bearing ?? 0,
+    nowMs: now,
+  });
+  return L.latLng(p.lat, p.lng);
 }
 
 function kickMotion() {
@@ -757,29 +770,47 @@ function kickMotion() {
   motionFrame = requestAnimationFrame(stepMotion);
 }
 
+// Les vitesses évoluent à chaque image, mais l'inventaire ne doit pas être
+// reconstruit : innerHTML remetrait le défilement à zéro sous le doigt de
+// l'utilisateur et ferait clignoter la liste. On ne met à jour que les
+// cellules de vitesse, une fois par seconde, et seulement si le panneau est
+// ouvert.
+let lastSpeedTick = 0;
+function refreshInventorySpeeds(t) {
+  if (t - lastSpeedTick < 1000) return;
+  lastSpeedTick = t;
+  if (!state.listView) return;
+  const list = $('inventory')?.querySelector('.invlist');
+  if (!list?.children.length) return;
+  // Une table de correspondance plutôt qu'un find() par ligne : 80 lignes ×
+  // 450 véhicules, ça fait 36 000 comparaisons par seconde.
+  const byKey = new Map(state.vehicles.map((v) => [vKey(v), v]));
+  for (const li of list.children) {
+    const v = byKey.get(li.dataset.veh);
+    const cell = li.querySelector('.spd');
+    if (!v || !cell) continue;
+    cell.textContent = speedText(vehicleSpeedKmh(v));
+  }
+}
+
 function stepMotion(now) {
   motionFrame = null;
   const t = now ?? performance.now();
+  refreshInventorySpeeds(t);
   for (const m of moving) {
     const from = m.__from, to = m.__target;
     if (!from || !to) continue;
     // Durée = distance / vitesse mesurée. Un bus rapide arrive au bout
     // vite, un bus à l'arrêt ne bouge pas : plus de durée constante
     // arbitraire qui ne colle à rien.
-    const d = metresBetween(from, to);
-    const v = m.__speed || 0;
-    const dur = v > 0.3 ? Math.min(Math.max((d / v) * 1000, 2500), 12000) : 9000;
+    const dur = M.interpDurationMs(M.metresBetween(from, to), m.__speed || 0);
     const p = Math.min(1, (t - m.__t0) / dur);
     // Un marqueur caché dans un cluster n'a pas d'icône à déplacer : on le
     // téléporte au but. Interpoler 300 pastilles hors écran coûtait 18 000
     // setLatLng par seconde pour rien.
     if (p >= 1 || !m._icon) { m.setLatLng(to); moving.delete(m); continue; }
-    // ease-in-out : départ et arrivée doux, vitesse constante au milieu
-    const e = p < 0.5 ? 2 * p * p : 1 - ((-2 * p + 2) ** 2) / 2;
-    // Attention : un LatLng de Leaflet expose .lng, PAS .lon. Se tromper
-    // produisait un NaN qui tuait la boucle d'animation.
-    const ll = L.latLng(from.lat + (to.lat - from.lat) * e, from.lng + (to.lng - from.lng) * e);
-    m.setLatLng(ll);
+    const ll = M.lerpLatLng(from, to, p);
+    m.setLatLng(L.latLng(ll.lat, ll.lng));
     // Mode « suivre » : on recentre la carte sur le véhicule choisi, à
     // 5 images/s — assez pour que ça semble continu, pas assez pour
     // siphonner le GPU.
@@ -906,7 +937,7 @@ function renderLineList() {
   const matchQ = (r) => !q || norm(r.short_name).includes(q) || norm(r.long_name).includes(q);
   const active = state.routes
     .filter((r) => (counts[r.route_id] || 0) > 0 && matchQ(r))
-    .sort((a, b) => (counts[b.route_id] - counts[a.route_id]) || a.short_name.localeCompare(b.short_name));
+    .sort((a, b) => (counts[b.route_id] - counts[a.route_id]) || cmpFr(a.short_name, b.short_name));
 
   // La liste est reconstruite d'un seul tenant puis injectée d'un coup :
   // 200 <li> recréés toutes les 15 s étaient le principal gaspillage.
@@ -1093,20 +1124,10 @@ function selectLine(routeId) {
 //   - le sens de la variante (le headsign du GTFS == la destination du RT)
 //   - les arrêts à venir, que le serveur donne déjà classés et horodatés
 //   - la traînée réellement parcourue (/api/track, ~45 min d'historique)
-function pickVariant(variants, v) {
-  const dest = norm(v.destination), to = norm(v.to), from = norm(v.from);
-  let best = null, bestScore = -1;
-  for (const variant of variants) {
-    const stops = variant.stops || [];
-    let score = 0;
-    if (variant.headsign && norm(variant.headsign) === dest) score += 4;
-    if (stops.length && norm(stops[stops.length - 1].name) === (to || dest)) score += 3;
-    if (stops.length && norm(stops[0].name) === from) score += 2;
-    if (v.next_stop_id && stops.some((s) => s.id === v.next_stop_id)) score += 1;
-    if (score > bestScore) { bestScore = score; best = variant; }
-  }
-  return best;
-}
+// Le choix du sens est dans lib/itinerary.mjs, testé par npm test : c'est ici
+// que se joue la moitié de l'exactitude de la carte, et une erreur met tout
+// l'itinéraire à l'envers sans que rien ne saute aux yeux.
+const pickVariant = (variants, v) => IT.pickVariantForVehicle(variants, v)?.variant ?? null;
 
 // ---------- notification de prochain passage ------------------------------
 // Le serveur calcule déjà les départs d'un arrêt ; il ne manquait que le
@@ -1547,6 +1568,9 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
 
 // deep link ?ligne=L1 (nom court ou route_id)
 (async function init() {
+  // La logique de mouvement et le choix de sens vivent dans lib/ : on attend
+  // que le pont les ait chargées avant de dessiner quoi que ce soit.
+  await window.tisseoLibReady;
   updateMapButton();
   updateNotifyButtons();
   connectStream();

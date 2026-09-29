@@ -1,0 +1,41 @@
+﻿Ô£ö metresBetween : 0,1┬░ de latitude Ôëê 11 km vers le nord (1.9386ms)
+Ô£ö metresBetween : sym├®trique, et nul sur soi-m├¬me (0.2097ms)
+Ô£ö metresBetween : ├á latitude de Toulouse, 0,1┬░ de longitude est plus court (0.1272ms)
+Ô£ö metresBetween : antimeridien sans NaN (0.1082ms)
+Ô£ö M_PER_DEG_LON r├®tr├®cit en montant vers le p├┤le (0.1113ms)
+Ô£ö bearingBetween : les quatre caps (0.1691ms)
+Ô£ö bearingBetween : nord-est en degr├®s ├®gaux n'est PAS 45┬░ (0.1331ms)
+Ô£ö bearingBetween : cap compris en diagonale, ├á latitude nulle (0.0951ms)
+Ô£ö smoothSpeed : premi├¿re mesure prise telle quelle (0.1123ms)
+Ô£ö smoothSpeed : une mesure aberrante est amortie, pas suivie (0.1495ms)
+Ô£ö smoothSpeed : converge vers la vitesse r├®elle (0.1474ms)
+Ô£ö smoothSpeed : une vitesse non finie est ignor├®e (0.9216ms)
+Ô£ö smoothSpeed : un arr├¬t franc ram├¿ne la vitesse vers z├®ro (0.2787ms)
+Ô£ö predict : ├á l'instant de la mesure, rien ne bouge (0.3955ms)
+Ô£ö predict : avance dans la direction du cap, ├á la vitesse mesur├®e (0.2557ms)
+Ô£ö predict : ne devine pas au-del├á de la limite (0.1458ms)
+Ô£ö predict : ne recule jamais dans le temps (0.0962ms)
+Ô£ö predict : ├á l'arr├¬t, la position reste celle observ├®e (0.0786ms)
+Ô£ö predict : sans mesure, on rend ce qu'on a (0.0883ms)
+Ô£ö predict : la distance extrapol├®e est proportionnelle au temps (0.1047ms)
+Ô£ö interpDurationMs : proportionnelle ├á la distance, born├®e (0.1423ms)
+Ô£ö interpDurationMs : ├á l'arr├¬t, on ne fige pas la pastille (0.0864ms)
+Ô£ö interpDurationMs : un bus rapide va plus vite qu'un bus lent (0.0762ms)
+Ô£ö easeInOut : bornes et sym├®trie (0.2173ms)
+Ô£ö easeInOut : borne les valeurs aberrantes (0.0832ms)
+Ô£ö easeInOut est croissant (0.2027ms)
+Ô£ö lerpLatLng : du premier au second point (1.0467ms)
+Ô£ö lerpLatLng : le point milieu est ├á mi-distance (0.1707ms)
+Ô£ö observedSpeed : vitesse plausible entre deux points (0.1833ms)
+Ô£ö observedSpeed : rejette les sauts trop rapproch├®s (bruit) (0.1233ms)
+Ô£ö observedSpeed : rejette les vitesses impossibles (0.0664ms)
+Ô£ö observedSpeed : tol├¿re un bond de ligne (rel├¿ve de conducteur) (0.0822ms)
+Ô£ö observedSpeed : sans historique, pas de vitesse (0.0691ms)
+Ôä╣ tests 33
+Ôä╣ suites 0
+Ôä╣ pass 33
+Ôä╣ fail 0
+Ôä╣ cancelled 0
+Ôä╣ skipped 0
+Ôä╣ todo 0
+Ôä╣ duration_ms 118.9626

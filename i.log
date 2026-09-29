@@ -1,0 +1,23 @@
+﻿Ô£ö normPlace : accents, casse et ponctuation indiff├®rentes (2.0596ms)
+Ô£ö normPlace : tol├¿re les espaces en trop (0.2088ms)
+Ô£ö la destination du v├®hicule d├®signe la bonne variante (0.4196ms)
+Ô£ö m├¬me destination, autre position : le d├®part tranche (0.1624ms)
+Ô£ö le terminus atteint l'arr├¬t suivant : bon sens identifi├® (0.2418ms)
+Ô£ö aucune destination : le terminus tranche encore (0.1622ms)
+Ô£ö le prochain arr├¬t de la variante d├®partage ├á lui seul (0.1231ms)
+Ô£ö sans le moindre signal, on le signale plut├┤t que d'inventer (0.1952ms)
+Ô£ö une correspondance exacte l'emporte sur une approximation (0.1463ms)
+Ô£ö l'approximation ne mord que sur un nom assez long (0.1954ms)
+Ô£ö accents et casse ne font pas perdre la correspondance (0.113ms)
+Ô£ö le score est justifi├® et l'ordre des indices est respect├® (0.1139ms)
+Ô£ö cas limites : pas de variante, pas de v├®hicule, entr├®es sales (0.1252ms)
+Ô£ö le r├®sultat d├®signe bien la variante choisie, par son index (0.0722ms)
+Ô£ö le choix est stable : deux appels donnent le m├¬me r├®sultat (0.3249ms)
+Ôä╣ tests 15
+Ôä╣ suites 0
+Ôä╣ pass 15
+Ôä╣ fail 0
+Ôä╣ cancelled 0
+Ôä╣ skipped 0
+Ôä╣ todo 0
+Ôä╣ duration_ms 94.8072

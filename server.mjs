@@ -260,6 +260,11 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.static(join(__dirname, 'public'), { maxAge: '5m' }));
+// Les modules purs de lib/ (motion, itinerary) sont servis tels quels : le
+// navigateur importe exactement le code que couvre `npm test`, au lieu d'une
+// recopie dans public/ qui divergerait en silence.
+app.use('/lib', express.static(join(__dirname, 'lib'), { maxAge: '5m' }));
+
 app.use('/api', (req, res, next) => {
   res.set('Cache-Control', 'no-store');
   next();

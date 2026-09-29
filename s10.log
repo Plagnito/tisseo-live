@@ -1,0 +1,7 @@
+Donnees GTFS : data/
+Horaires theoriques : 5786 couples arret/ligne, 33 motifs de dates.
+Horaires theoriques valables jusqu'au 20261028.
+Reseau vectoriel : 124 lignes, 14783 points.
+Tisseo Live : http://localhost:4127
+Routes : 124 | Arrets : 5737 | Lignes tracees : 124
+Fonds de carte : sombre=[esri-dark] clair=[osm, cyclosm, esri-street, opentopo]

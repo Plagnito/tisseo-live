@@ -242,8 +242,8 @@ body {
   display: flex; flex-direction: column; gap: 2px;
 }
 .inventory .inv {
-  display: grid; grid-template-columns: 10px auto 1fr; grid-template-areas:
-    'c l d' '. s s' '. p p';
+  display: grid; grid-template-columns: 10px auto 1fr auto; grid-template-areas:
+    'c l d v' '. s s v' '. p p v';
   gap: 1px 6px; align-items: center; cursor: pointer;
   padding: 4px 6px; border-radius: 8px; font-size: 12px;
 }
@@ -259,7 +259,10 @@ body {
   grid-area: p; color: var(--muted); font-size: 10.5px;
   font-variant-numeric: tabular-nums; margin-left: 16px;
 }
-.inventory .inv .spd { display: none; }
+.inventory .inv .spd {
+  grid-area: v; justify-self: end; color: var(--muted); font-size: 11px;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
 .inventory .invmore { font-size: 11px; color: var(--muted); padding-top: 6px; }
 
 /* compteurs de l'en-tête cliquables */

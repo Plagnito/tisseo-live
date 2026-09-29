@@ -1,0 +1,24 @@
+﻿OK   panneau ┬½ v├®hicules ┬╗ ouvert au clic sur le compteur
+OK   titre : ┬½ 445 v├®hicules en service ┬╗
+OK   v├®hicules list├®s (80)
+OK   chaque v├®hicule affiche ses coordonn├®es
+OK   le compteur est marqu├® actif
+OK   vitesse mesur├®e affich├®e (80/80 lignes : ├á l'arr├¬t, ├á l'arr├¬t, ├á l'arr├¬t, ├á l'arr├¬t)
+     capture : C:\Users\nolan\AppData\Local\Temp\tisseo-inventaire-vehicules.png
+OK   v├®hicule cliqu├® dans la liste (19ÔåÆ BorderougeBorderouge43.64135, 1.45237├á l'arr├¬t)
+OK   fiche v├®hicule ouverte
+OK   pastille du v├®hicule mise en ├®vidence
+OK   itin├®raire trac├® sur la carte (20 trac├®s)
+OK   titre : ┬½ Toutes les lignes ÔÇö 54 lignes, 445 v├®hicules ┬╗
+OK   r├®partition par mode : T├®l├®o 17 ┬À Bus 331 ┬À Tram 20 ┬À M├®tro 77
+     capture : C:\Users\nolan\AppData\Local\Temp\tisseo-inventaire-lignes.png
+OK   panneau de la ligne : ┬½ Ligne B ÔÇö 50 v├®hicules ┬╗
+OK   tous les v├®hicules list├®s sont de la m├¬me ligne
+OK   la ligne est filtr├®e sur la carte
+     capture ├á venir : C:\Users\nolan\AppData\Local\Temp\tisseo-inventaire-ligne.png
+OK   des tuiles charg├®es au z19 (20)
+OK   peu de tuiles en erreur (0)
+OK   fond adapt├® au zoom (esri-dark@z16 ÔåÆ osm au z19)
+     capture : C:\Users\nolan\AppData\Local\Temp\tisseo-zoom-19.png
+
+Tout est vert
