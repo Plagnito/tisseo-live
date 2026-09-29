@@ -272,6 +272,24 @@ async function loadNetwork() {
   return netLoading;
 }
 
+// Charge la géométrie du réseau même quand les tuiles s'affichent.
+//
+// Sans cela, le mode hors ligne ne sert à rien : le service worker ne met en
+// cache que ce qu'on lui demande, et /api/network n'était demandé qu'en mode
+// tracés. Avec de bonnes tuiles (le cas normal), la coupure de réseau
+// laissait donc une carte vide — le cache de secours n'avait jamais rien
+// dedans.
+//
+// 281 Ko, une seule fois, en tâche de fond après le premier rendu : rien
+// n'attend, et le repli est déjà prêt si une tuile tombe.
+function prerenderNetwork() {
+  setTimeout(() => loadNetwork().catch(() => {}), 1500);
+  // On ne fait pas le travail pour rien si l'onglet reste en arrière-plan.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') loadNetwork().catch(() => {});
+  }, { once: true });
+}
+
 function paintNetwork() {
   if (!netLayer.getLayers().length) return;
   // Le trait s'épaissit avec le zoom : sans fond de carte, le réseau doit
@@ -324,7 +342,11 @@ async function loadAll() {
     if (state.selectedId) await loadVehicleItinerary();
     checkNotifications();
   } catch (err) {
-    showError('Données temps réel injoignables (' + err.message + '). Nouvel essai dans ' + REFRESH_S + ' s…');
+    // err.message est un message technique en anglais (« failed to fetch »,
+    // « NetworkError when attempting to fetch resource ») : on ne le montre
+    // pas au voyageur. Il reste dans la console pour le débogage.
+    console.warn('[Tisséo] rafraîchissement impossible :', err);
+    showError('Réseau indisponible — le réseau de tracés reste affiché. Nouvel essai dans ' + REFRESH_S + ' s…');
   }
 }
 
@@ -646,10 +668,20 @@ function renderAll(stale) {
 }
 
 function renderHeader(stale) {
-  const age = Math.max(0, Math.floor(Date.now() / 1000) - state.rtTimestamp);
   const badge = $('liveBadge');
-  $('liveText').textContent = stale ? `données dégradées (il y a ${age}s)` : age <= 60 ? `en direct (il y a ${age}s)` : `il y a ${age}s`;
-  badge.className = 'live ' + (stale ? 'stale' : age <= 90 ? 'ok' : 'stale');
+  // Hors ligne, on n'a jamais reçu de flux : l'âge calculé depuis un
+  // horodatage nul vaut 1,8 milliard de secondes (« il y a 1790690424s »).
+  // Ce n'est pas une donnée ancienne, c'est l'absence de donnée : on le dit.
+  if (!state.rtTimestamp) {
+    $('liveText').textContent = stale ? 'hors ligne — tracés du réseau' : 'en attente du flux…';
+    badge.className = 'live stale';
+  } else {
+    const age = Math.max(0, Math.floor(Date.now() / 1000) - state.rtTimestamp);
+    $('liveText').textContent = stale
+      ? `données dégradées (il y a ${Math.round(age / 60)} min)`
+      : age <= 60 ? `en direct (il y a ${age} s)` : `il y a ${Math.round(age / 60)} min`;
+    badge.className = 'live ' + (stale ? 'stale' : age <= 90 ? 'ok' : 'stale');
+  }
   $('statVehicles').textContent = visibleVehicles().length;
   $('statLines').textContent = new Set(state.vehicles.map((v) => v.route_id)).size;
   $('statAlerts').textContent = state.alerts.length;
@@ -1044,15 +1076,19 @@ async function focusJourneyLeg(routeId, fromId, toId) {
     if (!variant) return;
     const color = '#' + (routeById.get(routeId)?.color || 'dc006b');
     const latlngs = variant.shape.map(([la, lo]) => [la, lo]);
-    L.polyline(latlngs, { color: '#000', weight: 11, opacity: .35, lineCap: 'round' }).addTo(journeyLayer);
-    L.polyline(latlngs, { color: '#fff', weight: 8, opacity: .8, lineCap: 'round' }).addTo(journeyLayer);
-    L.polyline(latlngs, { color, weight: 5, opacity: 1, lineCap: 'round' }).addTo(journeyLayer);
+    // className : les tracés du réseau sont chargés en arrière-plan même quand
+    // les tuiles s'affichent, donc « compter tous les paths du calque » ne
+    // permet plus de savoir si un itinéraire est affiché.
+    const trait = (o) => ({ lineCap: 'round', className: 'tr journey', ...o });
+    L.polyline(latlngs, trait({ color: '#000', weight: 11, opacity: .35 })).addTo(journeyLayer);
+    L.polyline(latlngs, trait({ color: '#fff', weight: 8, opacity: .8 })).addTo(journeyLayer);
+    L.polyline(latlngs, trait({ color, weight: 5, opacity: 1 })).addTo(journeyLayer);
     for (const s of variant.stops) {
       if (s.lat == null) continue;
       const isEnd = s.id === fromId || s.id === toId;
-      L.circleMarker([s.lat, s.lon], isEnd
+      L.circleMarker([s.lat, s.lon], trait(isEnd
         ? { radius: 7, color: '#fff', weight: 3, fillColor: color, fillOpacity: 1 }
-        : { radius: 3.5, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: .9 })
+        : { radius: 3.5, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: .9 }))
         .bindTooltip(escapeHtml(s.name), { direction: 'top', className: 'bus-tip' })
         .addTo(journeyLayer);
     }
@@ -1575,7 +1611,7 @@ if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
   updateNotifyButtons();
   connectStream();
   await loadTiles();
-  if (vectorOnly) { loadNetwork().then(fitNetwork); }
+  if (vectorOnly) { loadNetwork().then(fitNetwork); } else { prerenderNetwork(); }
   await loadAll();
   const want = new URLSearchParams(location.search).get('ligne');
   if (want) {

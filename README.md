@@ -198,7 +198,14 @@ faire tourner la carte.
 - **Favoris** (☆, persistés), **lien partageable** (`?ligne=L1`), **PWA** installable.
 - **Fluidité** : pastilles animées entre actualisations, regroupement (clusters)
   quand on dézoome, légende.
-- **Carte résiliente** : Leaflet local, fonds vérifiés, repli en mode tracés.
+ - **Carte résiliente** : Leaflet local, fonds vérifiés, repli en mode tracés.
+ - **Hors ligne** : la géométrie du réseau est mise en cache par le service
+   worker au démarrage (281 Ko, en tâche de fond) — sans cela le cache ne se
+   remplissait qu'en mode tracés, et une coupure de réseau laissait une carte
+   vide. Vérifié par `npm run test:e2e:hors-ligne` : réseau coupé, 243 tracés
+   toujours dessinés. Les positions, elles, restent réseau seul : on n'invente
+   pas de véhicule sans flux.
+
 
 Le backend met en cache le flux amont 10 s (avec `ETag`) pour respecter la limite
 de charge, et ressert les dernières données connues en cas de coupure (flag `stale`).
@@ -217,6 +224,7 @@ npm run test:e2e:metro        # métro théorique (serveur dédié, horloge à 1
 npm run test:e2e:inventaire   # inventaire lignes/véhicules, zoom au-delà du natif
 npm run test:e2e:iti          # planificateur A→B
 npm run test:e2e:live         # push SSE, alertes sur la carte, notifications
+npm run test:e2e:hors-ligne   # réseau coupé : la carte et ses tracés tiennent
 ```
 
 Les tests `e2e` ont besoin de Playwright (installé à part, `npm i -D playwright`).

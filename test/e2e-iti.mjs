@@ -49,7 +49,10 @@ const res = await page.evaluate(() => {
     sousTitre: box.querySelector('.jhead span')?.textContent?.replace(/\s+/g, ' '),
     etapes: box.querySelectorAll('li.jleg').length,
     lignes: box.querySelectorAll('li.jleg b .dline').length,
-    tracésCarte: document.querySelectorAll('.leaflet-overlay-pane path').length,
+    // On ne compte que les tracés de l'itinéraire (classe « journey ») : le
+    // réseau complet est chargé en arrière-plan pour le hors ligne, donc
+    // « tous les paths du calque » ne veut plus rien dire ici.
+    tracésCarte: document.querySelectorAll('.leaflet-overlay-pane path.journey').length,
     alerte: box.querySelector('.jerr')?.textContent,
   };
 });
@@ -66,7 +69,7 @@ console.log(`     capture : ${shot('itineraire-AB')}`);
 const avant = res.tracésCarte;
 await page.click('li.jleg[data-leg]');
 await page.waitForTimeout(2000);
-const apres = await page.evaluate(() => document.querySelectorAll('.leaflet-overlay-pane path').length);
+const apres = await page.evaluate(() => document.querySelectorAll('.leaflet-overlay-pane path.journey').length);
 ok(apres > 0, `le tracé de l\'étape est mis en avant (${apres} tracés, était ${avant})`);
 
 // --- 3. Une destination introuvable est expliquée -------------------------
@@ -84,7 +87,7 @@ await page.click('#jClose');
 await page.waitForTimeout(400);
 const ferme = await page.evaluate(() => ({
   vide: document.getElementById('jResults').innerHTML === '',
-  tracés: document.querySelectorAll('.leaflet-overlay-pane path').length,
+  tracés: document.querySelectorAll('.leaflet-overlay-pane path.journey').length,
 }));
 ok(ferme.vide, 'le bouton ✕ vide les résultats');
 ok(ferme.tracés === 0, 'et efface le trajet de la carte');
