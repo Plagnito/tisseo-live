@@ -305,8 +305,40 @@ body {
   .sidebar { position: absolute; z-index: 1000; height: 100%; transform: translateX(-100%); transition: transform .25s; width: 300px; box-shadow: 8px 0 30px rgba(0,0,0,.5); }
   .sidebar.open { transform: none; }
   .sidebar-toggle { display: block; position: absolute; right: -108px; top: 10px; z-index: 1001; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px; cursor: pointer; }
-  .stats { display: none; }
   .layout { position: relative; }
+}
+
+/* ---------- téléphone ----------
+   Les compteurs étaient masqués sous 820 px (`.stats { display: none }`),
+   ce qui rendait l'inventaire des véhicules et la liste des lignes
+   inatteignables sur TOUT téléphone — pas seulement incommodes, absents.
+   Ils restent donc affichés, en version compacte : le nombre, une petite
+   icône, et la barre défile horizontalement au lieu de déborder. */
+
+@media (max-width: 820px) {
+  /* Deux lignes plutôt qu'un défilement horizontal : en faisant défiler la
+     barre, les boutons de fond de carte et de thème sortaient de l'écran sans
+     rien l'indiquer. */
+  .topbar { flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
+  .brand { flex: 0 0 auto; }
+  .brand .city { display: none; }
+  .live { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stats { display: flex; flex: 0 0 auto; gap: 6px; margin-left: 0; }
+  .stats .chip { min-width: 0; padding: 4px 8px; display: flex; align-items: center; gap: 5px; }
+  .stats .chip b { display: inline; font-size: 15px; }
+  /* Le libellé (« véhicules », « lignes ») part, le titre reste : c'est le
+     compteur qu'on voit, pas ce qu'il compte sans le dire. */
+  .stats .chip span { display: none; }
+  .stats .chip::before { font-size: 12px; opacity: .75; }
+  #statVehiclesBtn::before { content: '🚌'; }
+  #statLinesBtn::before { content: '🗗'; }
+  .stats .chip:last-child::before { content: 'ℹ'; }
+
+  /* Cibles tactiles : 44 px est le plancher recommandé. Les boutons faisaient
+     31 px de haut. */
+  .topbar button { min-height: 44px; min-width: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  .actions { flex: 1 0 100%; gap: 6px; justify-content: flex-end; }
+  #btnRefresh { font-size: 12px; }
 }
 
 /* ---------- packs v2 : fluidité, favoris, arrêts ---------- */
@@ -327,6 +359,14 @@ body {
   display: flex; align-items: center; gap: 6px;
 }
 .legend b { color: var(--muted); font-weight: 600; }
+/* Sur petit écran la légende ne tient pas sur une ligne : elle débordait sur
+   deux lignes et recouvrait la liste de véhicules. Elle défile donc
+   horizontalement au lieu de s'étaler. */
+@media (max-width: 820px) {
+  .legend { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; max-width: calc(100vw - 24px); }
+  .legend::-webkit-scrollbar { display: none; }
+  .legend > * { flex: 0 0 auto; }
+}
 .pill.mini { display: inline-block; min-width: 30px; height: 20px; line-height: 16px; font-size: 10px; }
 .stopdot { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 2px solid #fff; display: inline-block; }
 

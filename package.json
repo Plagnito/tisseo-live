@@ -14,6 +14,8 @@
     "test:e2e:iti": "node test/e2e-iti.mjs",
     "test:e2e:live": "node test/e2e-live.mjs",
     "test:e2e:hors-ligne": "node test/hors-ligne.mjs",
+    "test:e2e:telephone": "node test/telephone.mjs",
+    "test:e2e:navigateurs": "node test/navigateurs.mjs",
     "verifier:traces": "node --test test/traces.test.mjs",
     "verifier:itineraires": "node --test test/itineraires.test.mjs",
     "verifier:vitesse": "node test/vitesse.mjs",

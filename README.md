@@ -219,6 +219,17 @@ faire tourner la carte.
    vide. Vérifié par `npm run test:e2e:hors-ligne` : réseau coupé, 243 tracés
    toujours dessinés. Les positions, elles, restent réseau seul : on n'invente
    pas de véhicule sans flux.
+ - **Téléphone** : la barre de compteurs était masquée sous 820 px, ce qui
+   rendait l'inventaire des véhicules et la liste des lignes **inatteignables
+   sur tout téléphone** — absents, pas seulement incommodes. Elle est désormais
+   compacte (nombre + icône) et la barre passe sur deux lignes pour que les
+   boutons de fond de carte et de thème restent à l'écran ; les cibles
+   tactiles font 44 px. Vérifié sur 360, 390 et 820 px
+   (`npm run test:e2e:telephone`).
+ - **Trois moteurs** : Chromium, Firefox et WebKit, y compris le pont vers
+   `lib/`, le push SSE, le service worker et le hors ligne
+   (`npm run test:e2e:navigateurs`). Firefox et WebKit demandent un
+   téléchargement : `npx playwright install firefox webkit`.
 
 
 Le backend met en cache le flux amont 10 s (avec `ETag`) pour respecter la limite
@@ -240,6 +251,8 @@ npm run test:e2e:inventaire   # inventaire lignes/véhicules, zoom au-delà du n
 npm run test:e2e:iti          # planificateur A→B
 npm run test:e2e:live         # push SSE, alertes sur la carte, notifications
 npm run test:e2e:hors-ligne   # réseau coupé : la carte et ses tracés tiennent
+npm run test:e2e:telephone     # 3 tailles d'écran : 360, 390 et 820 px
+npm run test:e2e:navigateurs   # Chromium, Firefox et WebKit
 ```
 
 Les tests `e2e` ont besoin de Playwright (installé à part, `npm i -D playwright`).

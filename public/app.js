@@ -1575,7 +1575,11 @@ setInterval(() => {
     // inutile d'attendre 15 s quand le flux change toutes les 10 s.
     if (state.countdown < REFRESH_S * 0.6) state.countdown = REFRESH_S;
   }
+  // Le suffixe « s » n'a de sens que pour un nombre de secondes. Quand le
+  // push est actif, l'appli affiche « live » et le HTML ajoutait encore « s » :
+  // le bouton affichait « ↻ lives ».
   $('countdown').textContent = sseLive ? 'live' : state.countdown;
+  $('countdownS').style.display = sseLive ? 'none' : '';
   renderHeader(false);
 }, 1000);
 
