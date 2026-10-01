@@ -1,9 +1,9 @@
 // Service worker Tisséo Live — cache du shell applicatif uniquement.
 // Les données temps réel (/api/*) ne sont JAMAIS mises en cache ici.
-const CACHE = 'tisseo-live-v9';
+const CACHE = 'tisseo-live-v10';
 const GEO = 'tisseo-geo-v1'; // géométrie du réseau : survit à une coupure
 const SHELL = [
-  './', './index.html', './styles.css', './app.js', './city.css', './city.js', './walking.js', './manifest.json', './icon.svg', './lib/city-explore.mjs', './lib/walk-rules.mjs',
+  './', './index.html', './styles.css?v=20261001-1.1.0', './app.js?v=20261001-1.1.0', './city.css?v=20261001-1.1.0', './city.js?v=20261001-1.1.0', './walking.js?v=20261001-1.1.0', './manifest.json', './icon.svg', './lib/city-explore.mjs', './lib/walk-rules.mjs',
   './vendor/leaflet.js', './vendor/leaflet.css', './vendor/leaflet.markercluster.js',
   './vendor/MarkerCluster.css', './vendor/MarkerCluster.Default.css',
   './vendor/images/marker-icon.png', './vendor/images/marker-icon-2x.png',
@@ -59,6 +59,26 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (url.pathname.startsWith('/api/')) return; // temps réel : réseau seul
+  // Une nouvelle visite doit recevoir le dernier HTML, tout en conservant
+  // la dernière page utilisable si la connexion est coupée.
+  if (e.request.mode === 'navigate' && url.origin === location.origin) {
+    e.respondWith((async () => {
+      const cache = await caches.open(CACHE);
+      try {
+        const response = await fetch(e.request);
+        if (response.ok) {
+          await cache.put(e.request, response.clone());
+          return response;
+        }
+        return await cache.match(e.request) || await cache.match('./index.html') || response;
+      } catch {
+        return await cache.match(e.request) || await cache.match('./index.html')
+          || new Response('Connexion indisponible. Rouvre cette page une fois connecté.',
+            { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      }
+    })());
+    return;
+  }
   e.respondWith(
     caches.match(e.request).then(
       (hit) => hit || fetch(e.request).then((res) => {
