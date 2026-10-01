@@ -82,15 +82,19 @@ function brut(chemin, hote) {
 const cookieDe =(res) => (res.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
 
 /** Fait le tour complet par le faux Atlas. Rend la dernière réponse et le cookie. */
-async function connexion(compteId, chemin = '/auth/connexion') {
-  const r1 = await fetch(B.base + chemin, { redirect: 'manual' });
+async function connexion(compteId, chemin = '/auth/connexion', { navigateur = '', revenir = true } = {}) {
+  const r1 = await fetch(B.base + chemin, { redirect: 'manual', headers: navigateur ? { Cookie: navigateur } : {} });
   assert.equal(r1.status, 302, 'la connexion renvoie vers Atlas');
+  // Le témoin posé au départ : c'est ce qui fait de nous « le même navigateur » au retour.
+  const temoin = cookieDe(r1);
   const versAtlas = new URL(r1.headers.get('location'));
   versAtlas.searchParams.set('compte', String(compteId));
   const r2 = await fetch(versAtlas, { redirect: 'manual' });
   assert.equal(r2.status, 302, 'Atlas renvoie le code');
-  const r3 = await fetch(r2.headers.get('location'), { redirect: 'manual' });
-  return { res: r3, cookie: cookieDe(r3), versAtlas, retour: r2.headers.get('location') };
+  const retour = r2.headers.get('location');
+  if (!revenir) return { temoin, versAtlas, retour, depart: r1 };
+  const r3 = await fetch(retour, { redirect: 'manual', headers: { Cookie: temoin } });
+  return { res: r3, cookie: cookieDe(r3), versAtlas, retour, temoin, depart: r1 };
 }
 async function session(compteId) {
   const { res, cookie } = await connexion(compteId);
@@ -187,6 +191,36 @@ test('le retour de connexion ne sert qu’une fois, et ne redirige jamais ailleu
     const { res } = await connexion(1, `/auth/connexion?retour=${encodeURIComponent(mauvais)}`);
     assert.equal(res.headers.get('location'), '/', mauvais);
   }
+});
+
+test('une connexion se termine dans le navigateur qui l’a commencée', async () => {
+  // Quelqu'un commence une connexion avec SON compte et fait ouvrir l'adresse
+  // de retour à une autre personne : elle ne doit pas se retrouver dans ce compte.
+  const piege = await connexion(2, '/auth/connexion', { revenir: false });
+  assert.match(piege.depart.headers.getSetCookie()[0], /^tisseo_demande=[0-9a-f]{36}; Path=\/auth; HttpOnly; SameSite=Lax; Max-Age=600$/);
+  const victime = await fetch(piege.retour, { redirect: 'manual' });
+  assert.equal(victime.status, 400, 'sans le témoin du navigateur de départ : refusé');
+  assert.equal(cookieDe(victime), '', 'et aucune session n’est ouverte');
+  assert.match(await victime.text(), /pas été commencée dans ce navigateur/);
+
+  const autre = await connexion(2, '/auth/connexion', { revenir: false });
+  const ailleurs = await fetch(autre.retour, { redirect: 'manual', headers: { Cookie: 'tisseo_demande=' + 'ab'.repeat(18) } });
+  assert.equal(ailleurs.status, 400, 'avec le témoin d’un AUTRE navigateur : refusé');
+  const tard = await fetch(autre.retour, { redirect: 'manual', headers: { Cookie: autre.temoin } });
+  assert.equal(tard.status, 400, 'une tentative refusée est consommée : elle ne se rejoue pas, même avec le bon témoin');
+
+  // Deux onglets du même navigateur ne se gênent pas : le témoin est réutilisé.
+  const un = await connexion(1, '/auth/connexion', { revenir: false });
+  const deux = await connexion(1, '/auth/connexion', { revenir: false, navigateur: un.temoin });
+  assert.equal(deux.temoin, un.temoin, 'le second onglet garde le même témoin');
+  for (const onglet of [un, deux]) {
+    const r = await fetch(onglet.retour, { redirect: 'manual', headers: { Cookie: un.temoin } });
+    assert.equal(r.status, 302);
+    assert.match(cookieDe(r), /^tisseo_session=/);
+  }
+  // Un témoin fantaisiste envoyé au départ n'est pas adopté tel quel.
+  const forge = await connexion(1, '/auth/connexion', { revenir: false, navigateur: 'tisseo_demande=<script>' });
+  assert.match(forge.temoin, /^tisseo_demande=[0-9a-f]{36}$/);
 });
 
 test('déconnexion : le jeton ne sert plus', async () => {
