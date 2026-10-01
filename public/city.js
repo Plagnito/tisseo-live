@@ -23,7 +23,7 @@
   let profile = readJson('tisseo.city.profile', { id:'fr:31555', name:'Toulouse',lat:43.6047,lon:1.4442,timezone:'Europe/Paris',transport:'tisseo' });
   const requestedCity = new URLSearchParams(location.search).get('city');
   if (requestedCity && requestedCity !== profile.id) profile = { id:requestedCity, name:'Ville',lat:43.6047,lon:1.4442,transport:'osm' };
-  let epoch=0, tourPoints=[], tourTicket=0;
+  let epoch=0, tourPoints=[], tourTicket=0, selectionRevision=0;
   const cityUrl=(path)=>path+(path.includes('?')?'&':'?')+'city='+encodeURIComponent(profile.id);
   const cityZone=()=>profile.timezone || weather?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
   const cityDay=(value=Date.now())=>new Intl.DateTimeFormat('en-CA',{timeZone:cityZone(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
@@ -135,6 +135,7 @@
   async function loadCatalog() {
     if (loadingCatalog) return;
     loadingCatalog = true; catalogError = false;const generation=epoch;
+    const restoreSelection = !catalog.length, selectionAtStart = selectionRevision;
     $('cityFeedback').textContent = 'Chargement des catégories…';
     try {
       const r = await fetch(cityUrl('/api/city/catalog'), { signal: AbortSignal.timeout(30_000) });
@@ -144,7 +145,10 @@
       if(j.profile){const old=profile.name;profile=j.profile;cityLabels();if(old!==profile.name)map.setView([profile.lat,profile.lon],14);try{localStorage.setItem('tisseo.city.profile',JSON.stringify(profile));}catch{}}
       catalog = j.categories;$('cityCoverage').textContent=j.notice||'Données publiques · couverture partielle, informations à vérifier auprès des lieux.';
       categories = new Map(catalog.map((c) => [c.id, c]));
-      selected = new Set(Array.isArray(saved.categories) ? saved.categories.filter((id) => categories.has(id)) : ['bikes', 'parking', 'events', 'culture', 'parks', 'services']);
+      const wanted = restoreSelection && selectionAtStart === selectionRevision
+        ? (Array.isArray(saved.categories) ? saved.categories : ['bikes', 'parking', 'events', 'culture', 'parks', 'services'])
+        : [...selected];
+      selected = new Set(wanted.filter((id) => categories.has(id)));
       if (selected.size < catalog.length) document.querySelectorAll('#cityPresets button').forEach((b) => { b.classList.remove('active'); b.setAttribute('aria-pressed', 'false'); });
       renderCategories();
       loadSelected();
@@ -379,12 +383,13 @@
     } catch (e) { toast(e.message || 'Parcours indisponible.'); }
   }
   $('viewCity').onclick = () => setActive(true);
-  $('viewTransport').onclick = () => {if(profile.transport==='tisseo'){setActive(false);return;}setActive(true);selected=new Set(['stops']);favoritesOnly=false;resetPractical();loadSelected();rebuildMarkers();renderCategories();render();toast('Arrêts référencés · passages en direct non fournis.');};
+  $('viewTransport').onclick = () => {if(profile.transport==='tisseo'){setActive(false);return;}setActive(true);selected=new Set(['stops']);selectionRevision++;favoritesOnly=false;resetPractical();loadSelected();rebuildMarkers();renderCategories();render();toast('Arrêts référencés · passages en direct non fournis.');};
   $('cityDate').textContent = new Date().toLocaleDateString('fr-FR', { timeZone: cityZone(), weekday: 'long', day: 'numeric', month: 'long' });
   $('cityCategories').onclick = (e) => {
     const b = e.target.closest('[data-category]'); if (!b) return;
     const id = b.dataset.category;
     if (selected.has(id)) selected.delete(id); else selected.add(id);
+    selectionRevision++;
     preset = null;
     document.querySelectorAll('#cityPresets button').forEach((b) => { b.classList.remove('active'); b.setAttribute('aria-pressed', 'false'); });
     listLimit = 30; loadSelected(); remember(); rebuildMarkers(); renderCategories(); render();
@@ -394,11 +399,13 @@
     preset = b.dataset.preset;
     favoritesOnly = false; intent = ''; resetPractical(); $('cityPeriod').value = 'upcoming';
     selected = new Set(catalog.filter((c) => preset === 'all' || c.group === preset).map((c) => c.id));
+    selectionRevision++;
     document.querySelectorAll('#cityPresets button').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', String(x === b)); });
     listLimit = 30; loadSelected(); remember(); rebuildMarkers(); renderCategories(); render();
   };
   $('cityClear').onclick = () => {
     selected = selected.size ? new Set() : new Set(catalog.map((c) => c.id));
+    selectionRevision++;
     loadSelected(); remember(); rebuildMarkers(); renderCategories(); render();
   };
   $('cityResults').onclick = (e) => {
@@ -413,6 +420,7 @@
   $('cityIntents').addEventListener('click', (e) => {
     const b = e.target.closest('[data-intent]'); if (!b) return; intent = b.dataset.intent; favoritesOnly = false; resetPractical();
     selected = new Set(intent === 'tonight' ? ['events', 'food', 'culture', 'bikes'] : intent === 'stroll' ? ['parks', 'visits', 'water', 'toilets', 'bikes'] : ['events', 'parks', 'libraries', 'water', 'toilets']);
+    selectionRevision++;
     $('cityPeriod').value = intent === 'tonight' ? 'tonight' : 'week'; $('cityEventTag').value = intent === 'family' ? 'family' : '';
     $('cityTransport').checked = profile.transport==='tisseo'; syncTransport(); loadSelected(); remember(); rebuildMarkers(); renderCategories(); render();
     document.querySelectorAll('[data-intent]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', String(x === b)); });
