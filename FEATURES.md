@@ -9,6 +9,7 @@
 - Balades de 2 à 6 étapes, réorganisation et calcul piéton par tronçon. Partage d’une liste de lieux dans Android, avec durée de marche estimée hors visites.
 - Promenade démarrée volontairement, pause/reprise, distance GPS estimée par jour, statistiques sur 7 et 30 jours et historique local. Le service Android continue écran éteint et s’arrête avec Terminer ; il ne se relance pas après une interruption du processus. Dans le navigateur, masquer la page arrête le suivi.
 - Gamification désactivée par défaut, activable dans les réglages : 10 points par tranche complète de 100 mètres enregistrés, un niveau tous les 500 points, badges de distance. Calculer un parcours ou ouvrir une fiche ne donne aucun point.
+- Compte Atlas facultatif : trajets enregistrés qui suivent le compte entre le site et Android, trajets planifiés (date ou jours de la semaine, partir à / arriver avant, rappel sur Android), partage d’un trajet ou d’une position en direct avec ses contacts Atlas, pour une durée choisie. Les positions partagées ne sont pas enregistrées par le serveur. Un assistant (ChatGPT, Claude) peut être relié au compte ; l’accès aux partages des amis est une permission à part, décochée par défaut.
 - Défi quotidien personnalisable et partage volontaire du défi dans Android. Les destinataires choisissent leur propre objectif ; les distances GPS et les positions ne sont pas publiées.
 
 ## Couverture
@@ -22,6 +23,6 @@ Les données varient selon la ville. Toulouse conserve ses sources spécialisée
 3. **Badges collectifs.** Récompenser une balade ensemble ou la découverte de plusieurs quartiers, sans classement obligatoire ni pénalité après une journée sans marche.
 4. **Balades partagées.** Permettre de proposer des étapes à un groupe et de voter avant de partir, puis exporter le programme.
 
-Ces fonctions en ligne nécessitent encore un service de groupes, des invitations et une gestion du consentement. Cette version propose déjà le partage Android des balades et défis, mais ne prétend pas synchroniser un groupe ou un classement.
+Ces fonctions en ligne nécessitent encore un service de groupes. Les comptes Atlas, les amis (contacts Atlas) et le partage consenti existent désormais et peuvent leur servir de socle. Cette version propose le partage Android des balades et défis, mais ne prétend pas synchroniser un groupe ou un classement.
 
 Les prochaines intégrations de transport devront déclarer leur périmètre et leur source GTFS/GTFS-RT ou GBFS avant de proposer de vrais horaires ou disponibilités hors Toulouse.

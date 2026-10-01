@@ -82,6 +82,24 @@ théoriques, et la carte indique que les véhicules sont des positions estimées
 Le serveur public sert les API Ville et Tisséo. Le téléphone peut les consulter
 par Wi-Fi ou réseau mobile, sans le PC ni le tunnel USB.
 
+## Version 1.2 : compte Atlas, trajets planifiés, partages
+
+La pastille **Compte** ouvre la connexion Atlas dans le navigateur du téléphone ; l’application ne voit jamais le mot de passe. Le retour se fait par le lien `tisseo-ville://auth`, avec un billet à usage unique échangé contre un jeton de session, gardé dans les préférences privées et lié au serveur qui l’a émis (changer de serveur l’oublie). Sans compte, tout le reste de l’application fonctionne comme avant.
+
+Une fois connecté : trajets enregistrés (les mêmes que sur le site), trajets planifiés, amis et partages. **Enregistrer** sous un itinéraire l’ajoute au compte ; sans connexion au compte, il reste dans « Mes déplacements », sur le téléphone.
+
+Un trajet planifié peut porter un **rappel**. L’alarme est exacte si l’autorisation « Alarmes et rappels » est accordée ; sinon Android choisit le moment dans une fenêtre qui peut dépasser l’heure sur certains téléphones, et l’écran le dit. Les rappels sont reposés au redémarrage du téléphone. Une notification n’est affichée que pour un trajet planifié connu de l’application, avec le nom enregistré.
+
+Le **partage de position** démarre uniquement par un geste, pour une durée choisie. Un service de premier plan avec notification permanente envoie la position environ toutes les 15 secondes et s’arrête à l’échéance, sur « Arrêter » ou à la déconnexion. Aucune localisation permanente en arrière-plan n’est demandée. Le serveur ne conserve pas ces positions. La position d’un ami qui partage la sienne s’affiche sur la carte native, avec son ancienneté.
+
+Essai local avec un faux Atlas (aucun vrai compte touché) :
+
+```powershell
+adb -s SERIAL reverse tcp:4127 tcp:4127
+adb -s SERIAL reverse tcp:4731 tcp:4731
+node scripts/banc-atlas.mjs      # dans SideApps/Tisseo ; puis le serveur avec ATLAS_URL=http://127.0.0.1:4731
+```
+
 ## Version 1.1 : villes, promenades et points
 
 Le sélecteur de ville utilise l’API officielle des communes françaises et Photon pour les autres villes. Une recherche est envoyée uniquement avec Rechercher. La détection automatique utilise une position autorisée, à l’ouverture si cette permission est déjà accordée ou après Ma position. Un choix manuel désactive cette détection jusqu’à sa réactivation. Les catalogues et lieux en cache sont séparés par ville ; les anciennes réponses sont ignorées lors d’un changement.

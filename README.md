@@ -134,6 +134,9 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
 | `GET /api/nearby?lat=…&lon=…&n=…` | Arrêts les plus proches + leurs passages |
 | `GET /api/journey?from=…&to=…` | Itinéraire A→B (nom d'arrêt, id ou `lat,lon`) |
 | `GET /api/status` | Santé : âge du flux, compteurs, véhicules recalés, erreurs amont |
+| `GET /auth/connexion` | Connexion par le compte Atlas (SSO, PKCE) ; `?app=android` revient dans l'application |
+| `/api/compte/…` | Trajets enregistrés, trajets planifiés, amis, partages, assistants autorisés — voir « Compte Atlas » |
+| `/oauth/…`, `/.well-known/oauth-…` | Serveur d'autorisation des assistants (connecteur MCP avec compte) |
 
 ## Ce que fait la carte
 
@@ -223,10 +226,50 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
    naturellement, puisqu'elle est plus courte que n'importe quel détour.
 
 
+## Compte Atlas : trajets enregistrés, planifiés, partagés
+
+Le compte est **facultatif** : sans lui, la carte, les itinéraires et le connecteur
+public marchent exactement comme avant. Avec lui (volet **Compte** du site, pastille
+**Compte** dans l'application Android) :
+
+- **Trajets enregistrés** — « Enregistrer » sous un itinéraire calculé. Les lieux sont
+  résolus à l'enregistrement (on garde l'arrêt compris, pas la faute de frappe), le
+  trajet se recalcule d'un geste et suit le compte d'un appareil à l'autre.
+- **Trajets planifiés** — partir à / arriver avant une heure, à une date ou certains
+  jours de la semaine (heure de Paris). L'itinéraire est **recalculé à la consultation**,
+  jamais figé ; au-delà de l'horizon des horaires publiés, la réponse le dit. Sur
+  Android, un rappel sonne avant le départ.
+- **Partages entre amis** — les amis sont les **contacts acceptés d'Atlas Contacts** ;
+  on ne peut rien partager à quelqu'un d'autre. Un partage est aussi annoncé par une
+  carte dans Atlas Contacts. Une **position en direct** se partage pour une durée
+  choisie (5 min à 4 h), une à la fois, et s'arrête d'elle-même.
+
+Ce que le serveur garde, et ce qu'il ne garde pas :
+
+- `data-user/` (hors git, fichiers `0600`, écriture atomique) : comptes (identifiant et
+  pseudo Atlas), trajets, planifications, partages, autorisations des assistants. Les
+  jetons de session et d'assistant n'y sont que sous forme d'**empreinte**.
+- Les **positions partagées ne sont jamais écrites** : elles vivent en mémoire, le temps
+  du partage, et disparaissent avec lui (ou au redémarrage). Passé deux minutes sans
+  nouvelle, une position n'est plus servie comme actuelle.
+- Le mot de passe ne passe jamais par ici : la connexion se fait chez Atlas
+  (code d'autorisation + PKCE). « Tout effacer » supprime les données du compte ici,
+  sans toucher au compte Atlas.
+
+Réglages (`.env`) : `PUBLIC_URL` (défaut `https://tisseo.plagnito.com`), `ATLAS_URL`
+(défaut `https://plagnito.com`), `TISSEO_DATA_USER` (dossier des comptes, défaut
+`data-user` ; `memoire` = rien sur le disque, pour les tests).
+
+Banc d'essai sans toucher au vrai Atlas : `node scripts/banc-atlas.mjs` (faux Atlas
+sur 4731, trois comptes) puis le serveur avec `ATLAS_URL=http://127.0.0.1:4731`.
+
 ## Connecteur MCP (ChatGPT, Claude…)
 
-`POST /mcp` est un serveur **MCP** (transport « Streamable HTTP », sans état, sans
-compte) : un assistant peut y interroger le réseau en direct. Tout est en lecture seule.
+Deux adresses, le même serveur **MCP** (transport « Streamable HTTP », sans état) :
+
+- `POST /mcp` — **sans compte**. Réseau en direct et mode Ville, tout en lecture seule.
+- `POST /mcp/compte` — **avec compte Atlas** (OAuth 2.1 : découverte RFC 9728 / 8414,
+  enregistrement dynamique, PKCE S256). Les mêmes outils, plus ceux du compte.
 
 | Outil | Ce qu'il répond |
 |---|---|
@@ -239,11 +282,30 @@ compte) : un assistant peut y interroger le réseau en direct. Tout est en lectu
 | `lignes` / `ligne` | Liste des lignes ; parcours et perturbations d'une ligne |
 | `perturbations` | Infos trafic en texte brut, par ligne |
 | `etat_du_reseau` | Vue d'ensemble, fraîcheur des données, validité des horaires |
+| `ville_rechercher`, `ville_categories`, `ville_lieux` | Mode Ville : trouver une ville, ses catégories, ses lieux |
+| `ville_meteo`, `ville_a_pied`, `ville_a_distance_de_marche`, `ville_balade` | Météo, trajet piéton, ce qui est à N minutes à pied, balade à étapes |
+
+Avec un compte (`/mcp/compte`) :
+
+| Outil | Ce qu'il fait |
+|---|---|
+| `mon_compte` | Qui est connecté, résumé de ce qui est enregistré |
+| `mes_trajets`, `enregistrer_trajet`, `supprimer_trajet`, `calculer_mon_trajet` | Trajets enregistrés |
+| `mes_trajets_planifies`, `planifier_trajet`, `modifier_trajet_planifie`, `supprimer_trajet_planifie`, `calculer_trajet_planifie` | Trajets planifiés |
+| `mes_amis`, `partages_recus`, `mes_partages`, `partager_trajet`, `arreter_partage` | Amis et partages — seulement si la case **amis** a été cochée à l'autorisation |
+
+Deux permissions, demandées sur l'écran d'accord : `tisseo` (ses propres trajets) et
+`amis` (décochée par défaut). Un assistant ne **démarre jamais** un partage de
+position, et ne voit celle d'un ami que si cet ami a lui-même coché « visible par les
+assistants » en la partageant. Chaque assistant autorisé se révoque depuis le volet
+Compte.
 
 **Brancher dans ChatGPT** : Paramètres → Applis et connecteurs → Paramètres avancés →
 *Mode développeur*, puis **Créer** : URL `https://tisseo.plagnito.com/mcp`,
-authentification **Aucune**. Dans Claude : Paramètres → Connecteurs → *Ajouter un
-connecteur personnalisé*, même URL.
+authentification **Aucune** — ou `https://tisseo.plagnito.com/mcp/compte`,
+authentification **OAuth** (rien à saisir : le client s'enregistre tout seul, puis
+ouvre la connexion Atlas et l'écran d'accord). Dans Claude : Paramètres → Connecteurs →
+*Ajouter un connecteur personnalisé*, mêmes URL.
 
 Ce qui rend les réponses fiables pour un modèle de langage :
 - heures en clair (fuseau de Paris) + « dans N min », jamais d'epoch seul ;
@@ -277,6 +339,10 @@ revient à la version précédente si `/api/health` ne répond pas. Il **rafraî
 GTFS** dans `data-live/` (hors git) : les horaires théoriques ne couvrent qu'environ un
 mois, et sans ça le métro perdrait ses horaires le jour où la fenêtre expire.
 `/api/status` donne `schedules_until`.
+
+`data-user/` (les comptes) est hors git lui aussi : il survit aux `reset --hard` du
+déploiement, et **rien ne le régénère** — c'est le seul dossier du service à sauvegarder.
+Côté Atlas, le client SSO `tisseo-live` est déclaré dans `plugins/comet-sso.js`.
 
 ## La carte, et ce qui se passe quand elle n'y est plus
 
@@ -346,11 +412,12 @@ de charge, et ressert les dernières données connues en cas de coupure (flag `s
 ## Tests
 
 ```powershell
-npm test        # 161 tests unitaires (node:test) : géométrie, interpolation
+npm test        # tests unitaires (node:test) : géométrie, interpolation
                 # sur le tracé, mouvement des pastilles, choix du sens d'une
                 # ligne, véhicules théoriques, recherche d'arrêts,
                 # itinéraires (balayage de 120 trajets), qualité des tracés,
-                # fonds de carte, connecteur MCP
+                # fonds de carte, connecteur MCP, comptes (trajets, plans,
+                # partages, OAuth des assistants, routes face à un faux Atlas)
 npm start       # dans un terminal…
 npm run test:e2e              # carte réelle + repli mode tracés sans tuiles
 npm run test:e2e:itineraire   # clic véhicule → itinéraire, fluidité, suivi
@@ -361,6 +428,8 @@ npm run test:e2e:live         # push SSE, alertes sur la carte, notifications
 npm run test:e2e:hors-ligne   # réseau coupé : la carte et ses tracés tiennent
 npm run test:e2e:telephone     # 3 tailles d'écran : 360, 390 et 820 px
 npm run test:e2e:navigateurs   # Chromium, Firefox et WebKit
+npm run test:e2e:compte        # compte : deux personnes, trajets, partage de position
+                               # (autonome : lance son faux Atlas et son serveur)
 ```
 
 Les tests `e2e` ont besoin de Playwright (installé à part, `npm i -D playwright`).

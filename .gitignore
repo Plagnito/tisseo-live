@@ -14,3 +14,8 @@ updater/supervisor.log*
 # Captures de vérification locales du mode Ville.
 city-*.png
 transport-mobile.png
+
+# Comptes : ce que le serveur garde sur les utilisateurs (sessions, trajets,
+# partages). Jamais dans le dépôt.
+data-user/
+data-user-banc/

@@ -35,6 +35,13 @@ import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
 import { indexRealtime } from './lib/realtime.mjs';
 import { createCityService, cityCatalog } from './lib/city.mjs';
 import { createCityDirectory, profileCatalog } from './lib/cities.mjs';
+import { createStore } from './lib/store.mjs';
+import { createAccounts } from './lib/account.mjs';
+import { createAtlas, createAtlasSessions } from './lib/atlas.mjs';
+import { createOAuth } from './lib/oauth.mjs';
+import { monterCompte } from './lib/compte-routes.mjs';
+import { createAccountTools, INSTRUCTIONS_COMPTE } from './lib/tools-compte.mjs';
+import { createCityTools, INSTRUCTIONS_VILLE } from './lib/tools-ville.mjs';
 
 // Les horaires théoriques (lib/schedules.mjs) raisonnent en heure LOCALE :
 // sur un serveur réglé en UTC (Raspberry Pi, conteneur), tout serait décalé
@@ -43,6 +50,7 @@ process.env.TZ = process.env.TISSEO_TZ || 'Europe/Paris';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 4127;
+const PUBLIC_URL = process.env.PUBLIC_URL || 'https://tisseo.plagnito.com';
 const RT_URL = 'https://api.tisseo.fr/opendata/gtfsrt/GtfsRt.json';
 const REFRESH_MS = 10_000; // pas plus d'un appel amont toutes les 10 s
 const RT_TIMEOUT_MS = 8_000; // on ne bloque jamais une requête client 30 s
@@ -904,12 +912,7 @@ async function geocode(q) {
 }
 
 
-const mcp = createMcpServer({
-  name: 'tisseo-live',
-  title: 'Tisséo Live',
-  version: '1.0.0',
-  instructions: INSTRUCTIONS,
-  tools: createTools({
+const outilsTransport = createTools({
     routes, stops, variants, routeById, modeOf, searchStops,
     live: getComputed,
     liveOrNull: computedOrNull,
@@ -937,9 +940,46 @@ const mcp = createMcpServer({
     rideEstimate: (routeId, board, alight) => router.estimate(routeId, board, alight),
     fares,
     gtfsMeta,
-    publicUrl: process.env.PUBLIC_URL || 'https://tisseo.plagnito.com',
+    publicUrl: PUBLIC_URL,
     geocode,
-  }),
+});
+
+// --- Comptes (Atlas), trajets enregistrés et planifiés, partages -----------
+// Tout ce que le serveur garde sur quelqu'un vit dans data-user/ (hors git,
+// comme data-live/ — mais que le superviseur n'efface jamais). Voir
+// lib/store.mjs, lib/account.mjs, lib/atlas.mjs, lib/oauth.mjs.
+const magasin = createStore({
+  dir: process.env.TISSEO_DATA_USER === 'memoire' ? null : join(__dirname, process.env.TISSEO_DATA_USER || 'data-user'),
+  log: (m) => console.warn(m),
+});
+const accounts = createAccounts({ store: magasin });
+const atlas = createAtlas();
+const atlasSessions = createAtlasSessions({ atlas, accounts });
+const oauth = createOAuth({ store: magasin });
+const outil = (nom) => outilsTransport.find((t) => t.name === nom);
+const compte = monterCompte(app, {
+  accounts, atlas, atlasSessions, oauth,
+  // Le même calcul que l'outil « itineraire » : un trajet enregistré donne
+  // exactement ce que le connecteur aurait répondu pour ces deux lieux.
+  calculer: (args) => outil('itineraire').handler(args),
+  resoudreLieu: outilsTransport.resoudreLieu,
+  arretExiste: (id) => Boolean(stops[id]),
+  horairesJusquau: () => scheduleUntil,
+  publicUrl: PUBLIC_URL,
+});
+console.log(`Comptes : ${magasin.persistant ? magasin.dir : 'mémoire seule'} | identité : ${atlas.base} (client ${atlas.clientId})`);
+
+const mcp = createMcpServer({
+  name: 'tisseo-live',
+  title: 'Tisséo Live',
+  version: '1.1.0',
+  instructions: `${INSTRUCTIONS}\n${INSTRUCTIONS_VILLE}`,
+  instructionsCompte: INSTRUCTIONS_COMPTE,
+  tools: [
+    ...outilsTransport,
+    ...createCityTools({ cities, cityService, cityContext, profileCatalog, resoudreLieu: outilsTransport.resoudreLieu }),
+    ...createAccountTools({ accounts, compte, publicUrl: PUBLIC_URL }),
+  ],
 });
 
 // Garde-fou : l'URL est publique et sans compte. 120 appels / min / IP
@@ -959,13 +999,22 @@ function mcpRateLimit(req, res, next) {
   next();
 }
 const mcpJson = express.json({ limit: '256kb' });
-app.all('/mcp', mcpRateLimit, (req, res, next) => {
+const mcpCorps = (req, res, next) => {
   if (req.method !== 'POST') return next();
   mcpJson(req, res, (err) => {
     if (err) return res.status(400).json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'JSON invalide' } });
     next();
   });
-}, ah(mcp.httpHandler));
+};
+// Deux adresses, un seul serveur d'outils :
+//   /mcp         sans compte — les outils publics, comme depuis le début. Un
+//                assistant qui présente quand même un jeton y gagne ses outils
+//                de compte.
+//   /mcp/compte  exige une autorisation : sans jeton, 401 et l'adresse où
+//                l'obtenir. C'est ce 401 qui déclenche la connexion Atlas chez
+//                ChatGPT et Claude.
+app.all('/mcp', mcpRateLimit, mcpCorps, compte.identifierAssistant(), ah(mcp.httpHandler));
+app.all('/mcp/compte', mcpRateLimit, mcpCorps, compte.identifierAssistant({ obligatoire: true }), ah(mcp.httpHandler));
 
 // 404 API + gestionnaire d'erreurs central (aucune pile affichée au client).
 app.use('/api', (req, res) => res.status(404).json({ error: 'Route inconnue' }));

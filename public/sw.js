@@ -1,9 +1,9 @@
 // Service worker Tisséo Live — cache du shell applicatif uniquement.
 // Les données temps réel (/api/*) ne sont JAMAIS mises en cache ici.
-const CACHE = 'tisseo-live-v11';
+const CACHE = 'tisseo-live-v12';
 const GEO = 'tisseo-geo-v1'; // géométrie du réseau : survit à une coupure
 const SHELL = [
-  './', './index.html', './styles.css?v=20261001-1.1.0-web2', './app.js?v=20261001-1.1.0-web2', './city.css?v=20261001-1.1.0-web2', './city.js?v=20261001-1.1.0-web2', './walking.js?v=20261001-1.1.0-web2', './manifest.json', './icon.svg', './lib/city-explore.mjs', './lib/walk-rules.mjs',
+  './', './index.html', './styles.css?v=20261001-1.1.0-web2', './app.js?v=20261001-1.1.0-web2', './city.css?v=20261001-1.1.0-web2', './city.js?v=20261001-1.1.0-web2', './walking.js?v=20261001-1.1.0-web2', './compte.css?v=20261002-1.2.0-web1', './compte.js?v=20261002-1.2.0-web1', './manifest.json', './icon.svg', './lib/city-explore.mjs', './lib/walk-rules.mjs',
   './vendor/leaflet.js', './vendor/leaflet.css', './vendor/leaflet.markercluster.js',
   './vendor/MarkerCluster.css', './vendor/MarkerCluster.Default.css',
   './vendor/images/marker-icon.png', './vendor/images/marker-icon-2x.png',
@@ -59,6 +59,12 @@ self.addEventListener('fetch', (e) => {
     return;
   }
   if (url.pathname.startsWith('/api/')) return; // temps réel : réseau seul
+  // Connexion Atlas, accord des assistants, connecteur MCP : jamais par le
+  // cache. Ces adresses RÉPONDENT PAR UNE REDIRECTION vers un autre site ; la
+  // branche « navigation » ci-dessous la prendrait pour un échec et servirait
+  // la page d'accueil à la place — on cliquerait « Se connecter » et la carte
+  // se rechargerait, sans un mot.
+  if (/^\/(auth|oauth|mcp|\.well-known)(\/|$)/.test(url.pathname)) return;
   // Une nouvelle visite doit recevoir le dernier HTML, tout en conservant
   // la dernière page utilisable si la connexion est coupée.
   if (e.request.mode === 'navigate' && url.origin === location.origin) {
