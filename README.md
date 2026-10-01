@@ -1,5 +1,92 @@
 # Tisséo Live — véhicules en direct à Toulouse
 
+## Mode Ville — Toulouse et ses alentours
+
+Le bouton **Ville**, à côté de **Transports**, ouvre une seconde lecture de
+la carte. Accès direct : `http://localhost:4127/?vue=ville`.
+
+- **Bouger** : stations VélÔToulouse avec le dernier relevé de disponibilité,
+  parkings et superposition facultative des véhicules Tisséo.
+- **Sortir** : événements en cours ou à venir, culture, patrimoine,
+  restaurants et cafés, parcs, marchés et équipements sportifs.
+- **Quotidien** : bibliothèques, mairies, fontaines à boire, toilettes
+  référencées dans OpenStreetMap et chantiers de voirie en cours ou à venir.
+
+Les catégories se combinent. La recherche porte sur les catégories actives ;
+« Dans la vue » limite la liste à la zone visible. Une fiche donne les
+informations publiées, leur source et un bouton **Y aller en transports**
+qui prépare la destination dans le calculateur existant. Les préférences
+restent dans le navigateur ; `?vue=ville` permet de partager ce mode.
+
+Sources : [Toulouse Métropole Open Data](https://data.toulouse-metropole.fr/),
+[Cyclocity GBFS](https://api.cyclocity.fr/contracts/toulouse/gbfs/station_information.json),
+[restauration OSM / Huwise](https://public.opendatasoft.com/explore/dataset/osm-france-food-service/),
+[patrimoine OSM / Huwise](https://public.opendatasoft.com/explore/dataset/osm-france-historic/)
+et Overpass pour les toilettes. Les exports OSM couvrent Toulouse ; les
+autres jeux peuvent couvrir la Métropole. Les licences sont indiquées dans
+les fiches et dans le panneau des sources.
+
+**Couverture** : aucun annuaire n'est exhaustif. L'agenda fusionne désormais
+les événements publics OpenAgenda de Toulouse et l'agenda touristique de la
+Métropole. Les doublons sont fusionnés ; les créneaux réels servent aux
+filtres aujourd'hui, ce soir et sept jours. Les annulations et événements
+terminés sont écartés. Un lien vers [l'agenda municipal](https://metropole.toulouse.fr/agenda)
+reste proposé. Les tarifs, horaires et capacités publiés
+ne sont pas assimilés à des disponibilités en direct. Les vélos indiquent
+l'âge du relevé ; les valeurs absentes restent inconnues.
+
+Le serveur partage et met en cache les lectures : une minute pour les
+statuts vélos, vingt minutes pour l'agenda et les chantiers, six heures pour
+les annuaires. Une source en panne conserve son dernier résultat en mémoire
+avec un avertissement ; sans résultat antérieur, la catégorie est signalée
+indisponible. Les lectures de sources sont dédupliquées et les reprises
+espacées d'au moins une minute. Aucune clé ni nouvelle dépendance nécessaire.
+
+API : `GET /api/city/catalog` et `GET /api/city/places?category=parks`.
+Vérification des normalisations, du cache et des pannes :
+`node --test test/city.test.mjs` (également inclus dans `npm test`).
+
+### Explorer au quotidien
+
+- Résumé **Aujourd'hui à Toulouse** : météo Open-Meteo, sorties de la journée,
+  chantiers en cours et informations du flux Tisséo.
+- Favoris locaux et envies **Ce soir**, **Une balade**, **Avec les enfants**.
+- Agenda : gratuit, famille, concerts, expositions. Les critères sont issus
+  des descriptions, conditions et âges publiés, sans inventer de programme.
+- Filtres pratiques : horaires connus, accès libre / gratuit, PMR déclaré et
+  option végétarienne déclarée. Une valeur inconnue ne satisfait pas un filtre.
+  L'évaluation des horaires reconnaît uniquement le sous-ensemble hebdomadaire
+  explicite OSM et `24/7` ; jours fériés et syntaxes complexes restent inconnus.
+- Clusters avec couleurs des catégories présentes et indication du mélange.
+- Zones de **5 / 10 / 15 minutes à pied** et parcours avec instructions,
+  calculés par Valhalla sur le réseau OSM. La distance à vol d'oiseau reste
+  explicitement distincte. La position n'est demandée qu'après un clic.
+
+API supplémentaires : `/api/city/weather`, `/api/city/isochrone?lat=…&lon=…`,
+`/api/city/walk?from_lat=…&from_lon=…&to_lat=…&to_lon=…`.
+Les lectures météo sont partagées quinze minutes ; les calculs piétons cinq
+minutes, avec un cache borné et une temporisation des échecs. Le moteur se
+configure avec `CITY_ROUTING_URL` ; le serveur de démonstration FOSSGIS est
+utilisé par défaut pour ce prototype, conformément à son usage modéré.
+En cas de panne, aucun tracé ou temps de marche n'est fabriqué.
+
+### Application Android native
+
+Le projet autonome [android/](android/README.md) utilise les vues Android et
+**MapLibre Native 13.6.1 (OpenGL)**. Il ne contient ni PWA ni WebView. Les deux
+modes, les catégories, l'agenda, les filtres, les favoris, les zones à pied,
+les fiches de lieux, les véhicules, les arrêts et le calculateur Tisséo sont
+des écrans natifs. Les positions Tisséo restent des estimations horaires.
+
+Le serveur HTTPS public `https://tisseo.plagnito.com` est sélectionné par défaut.
+Le tunnel USB `adb reverse tcp:4127 tcp:4127` reste une option de développement.
+Les fiches se partagent avec les applications Android ; un événement peut
+préparer une entrée de calendrier après choix de son créneau publié.
+Les favoris et les
+derniers annuaires consultés sont conservés sur le téléphone, avec indication
+explicite d'ancienneté hors connexion ; les disponibilités vélo ne sont alors
+pas présentées comme actuelles.
+
 Carte web qui affiche la **position estimée en temps réel** de tous les véhicules
 en circulation sur le réseau Tisséo (bus, tram, Téléo).
 

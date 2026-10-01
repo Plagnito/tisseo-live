@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#171d24">
-<meta name="description" content="Positions en direct des bus, tram et Téléo du réseau Tisséo à Toulouse.">
+<meta name="description" content="Toulouse sur une carte : transports, vélos, sorties, lieux utiles et vie quotidienne.">
 <title>Tisséo Live — Véhicules en direct à Toulouse</title>
 <link rel="manifest" href="manifest.json">
 <script>
@@ -42,17 +42,23 @@ __cssChain([
 ]);
 </script>
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="city.css">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 </head>
 <body>
 <header class="topbar">
-  <div class="brand"><span class="dot"></span><h1>Tisséo <em>Live</em></h1><span class="city">Toulouse</span></div>
+  <div class="brand"><span class="dot"></span><h1 id="appTitle">Tisséo <em>Live</em></h1><span class="city">Toulouse</span></div>
+  <nav class="view-switch" aria-label="Mode de la carte">
+    <button id="viewTransport" aria-pressed="true" class="active">Transports</button>
+    <button id="viewCity" aria-pressed="false">Ville</button>
+  </nav>
   <div class="live" id="liveBadge"><span class="pulse"></span><span id="liveText">connexion…</span></div>
-  <div class="stats">
+  <div class="stats" id="transportStats">
     <button class="chip" id="statVehiclesBtn" title="Lister tous les véhicules en service"><b id="statVehicles">–</b><span>véhicules</span></button>
     <button class="chip" id="statLinesBtn" title="Lister toutes les lignes et leurs véhicules"><b id="statLines">–</b><span>lignes</span></button>
     <div class="chip"><b id="statAlerts">–</b><span>infos trafic</span></div>
   </div>
+  <div id="cityHeader" class="city-header hidden"><span class="city-status-dot"></span><span id="cityHeaderText">Explorer Toulouse</span></div>
   <div class="actions">
     <button id="btnGeo" title="Véhicules et arrêts autour de moi">📍</button>
     <button id="btnFit" title="Zoomer sur les véhicules">⤢</button>
@@ -65,7 +71,7 @@ __cssChain([
 <div class="layout">
   <aside class="sidebar" id="sidebar">
     <button class="sidebar-toggle" id="sidebarToggle">☰ Panneau</button>
-    <div class="sidebar-body">
+    <div class="sidebar-body" id="transportPanel">
       <details class="planner" id="planner">
         <summary>🧭 Itinéraire</summary>
         <div class="planner-form">
@@ -111,6 +117,37 @@ __cssChain([
         Données : Tisséo / Toulouse Métropole (ODbL).
       </p>
     </div>
+    <div id="cityPanel" class="sidebar-body city-panel hidden">
+      <div class="city-intro">
+        <span class="city-eyebrow">TOULOUSE & ALENTOURS</span>
+        <h2>La ville, à portée<br>de carte<span>.</span></h2>
+        <p>Se déplacer, sortir, profiter du quotidien.</p>
+        <span id="cityDate" class="city-date"></span>
+      </div>
+      <details class="city-today" open><summary>Aujourd’hui à Toulouse</summary><div id="cityToday" role="status">Chargement du résumé…</div></details>
+      <div id="cityIntents" class="city-intents" aria-label="Choisir une envie"><button data-intent="tonight">Ce soir</button><button data-intent="stroll">Une balade</button><button data-intent="family">Avec les enfants</button><button id="cityFavorites">☆ Mes favoris <span id="cityFavoriteCount">0</span></button></div>
+      <label class="city-search"><span aria-hidden="true">⌕</span><input id="citySearch" type="search" placeholder="Un lieu, une adresse, une envie…" aria-label="Rechercher dans les catégories sélectionnées" autocomplete="off"></label>
+      <div id="cityPresets" class="city-presets" aria-label="Explorer par thème">
+        <button data-preset="all" aria-pressed="true" class="active">Tout</button>
+        <button data-preset="mobility" aria-pressed="false">Bouger</button>
+        <button data-preset="discover" aria-pressed="false">Sortir</button>
+        <button data-preset="daily" aria-pressed="false">Quotidien</button>
+      </div>
+      <div class="city-section-head"><h3>Sur ma carte</h3><button id="cityClear" class="city-text-button">Tout masquer</button></div>
+      <div id="cityCategories" class="city-categories"></div>
+      <label class="city-transport-option"><input id="cityTransport" type="checkbox"><span>Ajouter les véhicules Tisséo</span><span class="city-live-label">LIVE</span></label>
+      <div id="cityEventFilters" class="city-event-filters hidden">
+        <label for="cityPeriod">Agenda</label><select id="cityPeriod"><option value="upcoming">En cours & à venir</option><option value="today">Aujourd’hui</option><option value="tonight">Ce soir</option><option value="week">Les 7 prochains jours</option></select>
+        <select id="cityEventTag" aria-label="Type de sortie"><option value="">Toutes les sorties</option><option value="free">Gratuites</option><option value="family">En famille</option><option value="concert">Concerts</option><option value="exhibition">Expositions</option></select>
+      </div>
+      <details class="city-filters"><summary>Filtres pratiques</summary><div><label><input type="checkbox" id="cityOpen"> Ouvert maintenant</label><label><input type="checkbox" id="cityFree"> Accès libre / gratuit</label><label><input type="checkbox" id="cityAccessible"> Accès PMR déclaré</label><label><input type="checkbox" id="cityVegetarian"> Option végétarienne</label></div><p>Seuls les lieux dont la source renseigne ce critère sont retenus. Les accès et horaires restent à vérifier sur place.</p></details>
+      <div class="city-around"><b>Autour de moi, à pied</b><div><button id="cityAroundGeo">Ma position</button><button id="cityAroundCenter">Centre de la carte</button></div><div><select id="cityWalkMinutes" aria-label="Temps de marche"><option value="5">5 minutes</option><option value="10" selected>10 minutes</option><option value="15">15 minutes</option></select><button id="cityAroundClear" class="hidden">Retirer la zone</button></div><small id="cityAroundStatus" role="status">Des zones calculées sur les chemins piétons.</small></div>
+      <div class="city-results-head"><h3>À explorer <span id="cityResultCount">0</span></h3><label><input id="cityInView" type="checkbox" checked> Dans la vue</label></div>
+      <p id="cityFeedback" class="city-feedback" role="status" aria-live="polite"></p>
+      <ul id="cityResults" class="city-results"></ul>
+      <button id="cityMore" class="city-more hidden">Afficher davantage</button>
+      <details class="city-sources"><summary>Sources & couverture des données</summary><p>Cette carte rassemble des données publiques. Les horaires, tarifs et accès publiés peuvent évoluer. L’agenda et les annuaires ne couvrent pas toute la ville.</p><div id="citySources"></div><a href="https://metropole.toulouse.fr/agenda" target="_blank" rel="noopener noreferrer">Consulter aussi l’agenda municipal ↗</a></details>
+    </div>
   </aside>
   <main class="mapwrap">
     <div id="map"></div>
@@ -118,6 +155,8 @@ __cssChain([
     <div id="toast" class="toast hidden"></div>
     <section id="inventory" class="inventory hidden"></section>
     <section id="detail" class="detail hidden"></section>
+    <section id="cityDetail" class="detail city-detail hidden" aria-label="Fiche du lieu"></section>
+    <div id="cityMapNote" class="city-map-note hidden"><span class="city-note-icon" aria-hidden="true">✦</span><div><b>Toulouse, côté ville</b><span id="cityMapSummary">Choisis ce que tu veux explorer.</span></div><button id="cityFit" title="Recentrer sur les lieux sélectionnés" aria-label="Recentrer sur les lieux sélectionnés">⤢</button></div>
   </main>
 </div>
 
@@ -140,10 +179,13 @@ __cssChain([
   // qui diverge en silence.
   import * as M from '/lib/motion.mjs';
   import * as IT from '/lib/itinerary.mjs';
+  import * as CE from '/lib/city-explore.mjs';
+  window.CE = CE;
   window.M = M;
   window.IT = IT;
   window.dispatchEvent(new Event('tisseo:lib'));
 </script>
 <script src="app.js"></script>
+<script src="city.js"></script>
 </body>
 </html>

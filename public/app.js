@@ -291,6 +291,7 @@ function prerenderNetwork() {
 }
 
 function paintNetwork() {
+  window.cityView?.syncTransport();
   if (!netLayer.getLayers().length) return;
   // Le trait s'épaissit avec le zoom : sans fond de carte, le réseau doit
   // rester lisible jusqu'au niveau rue.
@@ -668,6 +669,7 @@ function renderAll(stale) {
 }
 
 function renderHeader(stale) {
+  if (window.cityView?.active) return;
   const badge = $('liveBadge');
   // Hors ligne, on n'a jamais reçu de flux : l'âge calculé depuis un
   // horodatage nul vaut 1,8 milliard de secondes (« il y a 1790690424s »).
@@ -1226,6 +1228,7 @@ function checkNotifications(force) {
 }
 
 async function selectVehicle(key) {
+  window.cityView?.showTransportVehicle();
   state.selectedId = key;
   state.selectedStop = null;
   state.nearby = null;
@@ -1369,6 +1372,7 @@ function relTime(t) {
 }
 
 function renderDetail() {
+  if (window.cityView?.active) return;
   const box = $('detail');
   // 1) panneau "autour de moi"
   if (state.nearby) {
@@ -1493,8 +1497,9 @@ $('modes').addEventListener('click', (e) => {
   renderAll();
 });
 
-$('btnRefresh').onclick = () => { state.countdown = 0; };
+$('btnRefresh').onclick = () => { if (window.cityView?.active) window.cityView.refresh(); else state.countdown = 0; };
 $('btnFit').onclick = () => {
+  if (window.cityView?.active) { window.cityView.fit(); return; }
   const vs = visibleVehicles();
   if (!vs.length) return;
   map.flyToBounds(L.latLngBounds(vs.map((v) => [v.lat, v.lon])).pad(0.15), { duration: 0.8 });
@@ -1528,7 +1533,8 @@ $('btnGeo').onclick = () => {
       L.circleMarker([lat, lon], { radius: 8, color: '#fff', weight: 2, fillColor: '#1e90ff', fillOpacity: 1 }).addTo(geoLayer)
         .bindTooltip('Vous êtes ici').openTooltip();
       map.flyTo([lat, lon], 15, { duration: 0.8 });
-      loadNearby(lat, lon);
+      if (window.cityView?.active) window.cityView.around(lat, lon);
+      else loadNearby(lat, lon);
     },
     () => toast('Position refusée ou indisponible.'),
     { timeout: 10000 }

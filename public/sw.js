@@ -1,9 +1,9 @@
 // Service worker Tisséo Live — cache du shell applicatif uniquement.
 // Les données temps réel (/api/*) ne sont JAMAIS mises en cache ici.
-const CACHE = 'tisseo-live-v4';
+const CACHE = 'tisseo-live-v7';
 const GEO = 'tisseo-geo-v1'; // géométrie du réseau : survit à une coupure
 const SHELL = [
-  './', './index.html', './styles.css', './app.js', './manifest.json', './icon.svg',
+  './', './index.html', './styles.css', './app.js', './city.css', './city.js', './manifest.json', './icon.svg', './lib/city-explore.mjs',
   './vendor/leaflet.js', './vendor/leaflet.css', './vendor/leaflet.markercluster.js',
   './vendor/MarkerCluster.css', './vendor/MarkerCluster.Default.css',
   './vendor/images/marker-icon.png', './vendor/images/marker-icon-2x.png',

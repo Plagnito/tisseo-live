@@ -10,3 +10,7 @@ updater/supervisor.log*
 # Tout ce que les tests et le script de relance écrivent pour être relu n'est
 # pas du code : journaux de diagnostic, sorties du superviseur.
 *.log
+
+# Captures de vérification locales du mode Ville.
+city-*.png
+transport-mobile.png

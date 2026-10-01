@@ -33,6 +33,7 @@ import { theoreticalVehicles } from './lib/theoretical.mjs';
 import { createMcpServer } from './lib/mcp.mjs';
 import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
 import { indexRealtime } from './lib/realtime.mjs';
+import { createCityService, cityCatalog } from './lib/city.mjs';
 
 // Les horaires théoriques (lib/schedules.mjs) raisonnent en heure LOCALE :
 // sur un serveur réglé en UTC (Raspberry Pi, conteneur), tout serait décalé
@@ -271,6 +272,30 @@ app.use('/api', (req, res, next) => {
 });
 
 const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+const cityService = createCityService();
+const { createCityContext, cityPoint } = await import('./lib/city-context.mjs');
+const cityContext = createCityContext();
+app.get('/api/city/catalog', (req, res) => res.json(cityCatalog()));
+app.get('/api/city/places', ah(async (req, res) => {
+  const category = String(req.query.category || '');
+  if (!cityCatalog().categories.some((c) => c.id === category)) {
+    return res.status(400).json({ error: 'Catégorie Ville inconnue' });
+  }
+  res.json(await cityService.places(category));
+}));
+app.get('/api/city/weather', ah(async (req, res) => {
+  try { res.json(await cityContext.weather()); } catch { res.status(502).json({ error: 'Météo momentanément indisponible' }); }
+}));
+app.get('/api/city/isochrone', ah(async (req, res) => {
+  const origin = cityPoint(req.query.lat, req.query.lon);
+  if (!origin) return res.status(400).json({ error: 'Départ hors de Toulouse ou coordonnées invalides' });
+  try { res.json(await cityContext.isochrone(origin)); } catch { res.status(502).json({ error: 'Calcul piéton indisponible. Réessaie dans un instant.' }); }
+}));
+app.get('/api/city/walk', ah(async (req, res) => {
+  const from = cityPoint(req.query.from_lat, req.query.from_lon), to = cityPoint(req.query.to_lat, req.query.to_lon);
+  if (!from || !to) return res.status(400).json({ error: 'Coordonnées locales valides requises' });
+  try { res.json(await cityContext.walk(from, to)); } catch (e) { res.status(e instanceof RangeError ? 400 : 502).json({ error: e instanceof RangeError ? e.message : 'Parcours à pied momentanément indisponible' }); }
+}));
 
 async function computedOrError(res) {
   try {

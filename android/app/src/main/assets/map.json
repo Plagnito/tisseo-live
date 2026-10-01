@@ -1,0 +1,25 @@
+{
+  "version": 8,
+  "glyphs": "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+  "sources": {
+    "streets": {"type":"raster","tiles":["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],"tileSize":256,"maxzoom":19,"attribution":"© OpenStreetMap · Toulouse Métropole · Cyclocity"},
+    "places": {"type":"geojson","data":{"type":"FeatureCollection","features":[]},"cluster":true,"clusterRadius":44,"clusterMaxZoom":16,
+      "clusterProperties":{"sortir":["+",["case",["==",["get","group"],"discover"],1,0]],"bouger":["+",["case",["==",["get","group"],"mobility"],1,0]],"quotidien":["+",["case",["==",["get","group"],"daily"],1,0]]}},
+    "vehicles": {"type":"geojson","data":{"type":"FeatureCollection","features":[]}},
+    "walking": {"type":"geojson","data":{"type":"FeatureCollection","features":[]}},
+    "zones": {"type":"geojson","data":{"type":"FeatureCollection","features":[]}},
+    "position": {"type":"geojson","data":{"type":"FeatureCollection","features":[]}}
+  },
+  "layers": [
+    {"id":"streets","type":"raster","source":"streets"},
+    {"id":"zone-fill","type":"fill","source":"zones","paint":{"fill-color":"#c88466","fill-opacity":0.16}},
+    {"id":"zone-line","type":"line","source":"zones","paint":{"line-color":"#b45b40","line-width":2}},
+    {"id":"walk-line","type":"line","source":"walking","paint":{"line-color":"#b45b40","line-width":5}},
+    {"id":"place-cluster","type":"circle","source":"places","filter":["has","point_count"],"paint":{"circle-radius":23,"circle-color":"#253c3b","circle-stroke-color":"#fff9ed","circle-stroke-width":3}},
+    {"id":"cluster-text","type":"symbol","source":"places","filter":["has","point_count"],"layout":{"text-field":["concat",["to-string",["get","point_count"]],"\n",["case",[">",["get","sortir"],0],"S ",""],["case",[">",["get","bouger"],0],"B ",""],["case",[">",["get","quotidien"],0],"Q",""]],"text-font":["Noto Sans Regular"],"text-size":12,"text-allow-overlap":true},"paint":{"text-color":"#ffffff"}},
+    {"id":"place-point","type":"circle","source":"places","filter":["!",["has","point_count"]],"paint":{"circle-radius":8,"circle-color":["get","color"],"circle-stroke-color":"#fff","circle-stroke-width":2}},
+    {"id":"vehicle-point","type":"circle","source":"vehicles","paint":{"circle-radius":11,"circle-color":["get","color"],"circle-stroke-color":"#fff","circle-stroke-width":2}},
+    {"id":"vehicle-text","type":"symbol","source":"vehicles","layout":{"text-field":["get","line"],"text-font":["Noto Sans Regular"],"text-size":10,"text-allow-overlap":false},"paint":{"text-color":"#fff","text-halo-color":"#253c3b","text-halo-width":1}},
+    {"id":"my-position","type":"circle","source":"position","paint":{"circle-radius":7,"circle-color":"#2673c4","circle-stroke-color":"#fff","circle-stroke-width":3}}
+  ]
+}

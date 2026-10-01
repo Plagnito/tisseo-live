@@ -1,7 +1,7 @@
 {
   "name": "Tisséo Live — Toulouse",
   "short_name": "Tisséo Live",
-  "description": "Positions en direct des bus, tram et Téléo du réseau Tisséo à Toulouse.",
+  "description": "Transports en direct et mode Ville : sorties, mobilité, lieux utiles et vie quotidienne à Toulouse.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
