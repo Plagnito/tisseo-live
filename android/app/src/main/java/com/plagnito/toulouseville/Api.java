@@ -18,8 +18,8 @@ final class Api {
     }
     JSONObject get(String path) throws Exception {
         HttpURLConnection c = (HttpURLConnection) new URL(base + path).openConnection();
-        c.setConnectTimeout(12000); c.setReadTimeout(35000);
-        c.setRequestProperty("Accept", "application/json"); c.setRequestProperty("User-Agent", "ToulouseVille-Android/1.0");
+        c.setConnectTimeout(12000); c.setReadTimeout(50000);
+        c.setRequestProperty("Accept", "application/json"); c.setRequestProperty("User-Agent", "VillePromenade-Android/1.1");
         try {
             int code = c.getResponseCode();
             InputStream stream = code < 400 ? c.getInputStream() : c.getErrorStream();

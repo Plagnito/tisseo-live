@@ -119,12 +119,14 @@ __cssChain([
     </div>
     <div id="cityPanel" class="sidebar-body city-panel hidden">
       <div class="city-intro">
-        <span class="city-eyebrow">TOULOUSE & ALENTOURS</span>
+        <span class="city-eyebrow" id="cityEyebrow">TOULOUSE & ALENTOURS</span>
         <h2>La ville, à portée<br>de carte<span>.</span></h2>
         <p>Se déplacer, sortir, profiter du quotidien.</p>
-        <span id="cityDate" class="city-date"></span>
+        <span id="cityDate" class="city-date"></span><p id="cityCoverage" class="city-coverage"></p>
       </div>
-      <details class="city-today" open><summary>Aujourd’hui à Toulouse</summary><div id="cityToday" role="status">Chargement du résumé…</div></details>
+      <details class="city-picker"><summary id="cityPickerTitle">Toulouse · changer de ville</summary><div><label for="cityNameSearch">Ville à explorer</label><input id="cityNameSearch" type="search" placeholder="Paris, Lyon, Bordeaux, Berlin…" autocomplete="off"><button id="cityNameGo">Rechercher</button><button id="cityAuto">Détecter ma ville</button><p id="cityPickerStatus" role="status"></p><div id="cityChoices"></div></div></details>
+      <details class="city-tour"><summary>Ma balade à étapes <span id="cityTourCount">0</span></summary><p>Ajoute 2 à 6 lieux depuis leurs fiches. Le temps de marche exclut les visites et les pauses.</p><div id="cityTourSteps"></div><button id="cityTourGo">Calculer la balade</button><button id="cityTourClear">Vider les étapes</button><div id="cityTourResult" role="status"></div></details>
+      <details class="city-today" open><summary id="cityTodayTitle">Aujourd’hui à Toulouse</summary><div id="cityToday" role="status">Chargement du résumé…</div></details>
       <div id="cityIntents" class="city-intents" aria-label="Choisir une envie"><button data-intent="tonight">Ce soir</button><button data-intent="stroll">Une balade</button><button data-intent="family">Avec les enfants</button><button id="cityFavorites">☆ Mes favoris <span id="cityFavoriteCount">0</span></button></div>
       <label class="city-search"><span aria-hidden="true">⌕</span><input id="citySearch" type="search" placeholder="Un lieu, une adresse, une envie…" aria-label="Rechercher dans les catégories sélectionnées" autocomplete="off"></label>
       <div id="cityPresets" class="city-presets" aria-label="Explorer par thème">
@@ -146,7 +148,7 @@ __cssChain([
       <p id="cityFeedback" class="city-feedback" role="status" aria-live="polite"></p>
       <ul id="cityResults" class="city-results"></ul>
       <button id="cityMore" class="city-more hidden">Afficher davantage</button>
-      <details class="city-sources"><summary>Sources & couverture des données</summary><p>Cette carte rassemble des données publiques. Les horaires, tarifs et accès publiés peuvent évoluer. L’agenda et les annuaires ne couvrent pas toute la ville.</p><div id="citySources"></div><a href="https://metropole.toulouse.fr/agenda" target="_blank" rel="noopener noreferrer">Consulter aussi l’agenda municipal ↗</a></details>
+      <details class="city-sources"><summary>Sources & couverture des données</summary><p>Cette carte rassemble des données publiques. Les horaires, tarifs et accès publiés peuvent évoluer. L’agenda et les annuaires ne couvrent pas toute la ville.</p><div id="citySources"></div><a id="cityMunicipalAgenda" href="https://metropole.toulouse.fr/agenda" target="_blank" rel="noopener noreferrer">Consulter aussi l’agenda municipal ↗</a></details>
     </div>
   </aside>
   <main class="mapwrap">
@@ -187,5 +189,6 @@ __cssChain([
 </script>
 <script src="app.js"></script>
 <script src="city.js"></script>
+<script type="module" src="walking.js"></script>
 </body>
 </html>

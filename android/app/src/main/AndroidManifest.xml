@@ -2,9 +2,18 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <application android:label="Toulouse Ville" android:icon="@drawable/ic_city" android:theme="@style/AppTheme" android:allowBackup="false" android:networkSecurityConfig="@xml/network_security_config" android:supportsRtl="true">
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
+    <application android:label="Ville &amp; Promenade" android:icon="@drawable/ic_city" android:theme="@style/AppTheme" android:allowBackup="false" android:networkSecurityConfig="@xml/network_security_config" android:supportsRtl="true">
         <activity android:name=".MainActivity" android:exported="true" android:configChanges="keyboardHidden|orientation|screenSize">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity>
+        <activity android:name=".WidgetConfigureActivity" android:exported="true"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" /></intent-filter></activity>
+        <receiver android:name=".DeparturesWidget" android:exported="false" android:label="Tisséo · prochains passages"><intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter><meta-data android:name="android.appwidget.provider" android:resource="@xml/departures_widget_info" /></receiver>
+        <receiver android:name=".WidgetPinnedReceiver" android:exported="false" />
+        <service android:name=".RefreshService" android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE" />
+        <service android:name=".WalkService" android:exported="false" android:foregroundServiceType="location" />
     </application>
 </manifest>

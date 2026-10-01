@@ -5,8 +5,9 @@ import java.util.List;
 
 final class GeoRules {
     static final ZoneId PARIS = ZoneId.of("Europe/Paris");
-    static String day(String instant) { return OffsetDateTime.parse(instant).atZoneSameInstant(PARIS).toLocalDate().toString(); }
-    static String today() { return LocalDate.now(PARIS).toString(); }
+    static volatile ZoneId CITY_ZONE = PARIS;
+    static String day(String instant) { return OffsetDateTime.parse(instant).atZoneSameInstant(CITY_ZONE).toLocalDate().toString(); }
+    static String today() { return LocalDate.now(CITY_ZONE).toString(); }
     static boolean inRing(double lon, double lat, List<double[]> ring) {
         boolean inside = false;
         for (int i = 0, j = ring.size() - 1; i < ring.size(); j = i++) {

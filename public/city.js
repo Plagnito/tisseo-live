@@ -20,6 +20,29 @@
   const svg = (id) => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${icons[id] || icons.pin}</svg>`;
   const h = escapeHtml;
   const saved = readJson('tisseo.city.settings', {});
+  let profile = readJson('tisseo.city.profile', { id:'fr:31555', name:'Toulouse',lat:43.6047,lon:1.4442,timezone:'Europe/Paris',transport:'tisseo' });
+  const requestedCity = new URLSearchParams(location.search).get('city');
+  if (requestedCity && requestedCity !== profile.id) profile = { id:requestedCity, name:'Ville',lat:43.6047,lon:1.4442,transport:'osm' };
+  let epoch=0, tourPoints=[], tourTicket=0;
+  const cityUrl=(path)=>path+(path.includes('?')?'&':'?')+'city='+encodeURIComponent(profile.id);
+  const cityZone=()=>profile.timezone || weather?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const cityDay=(value=Date.now())=>new Intl.DateTimeFormat('en-CA',{timeZone:cityZone(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+  function eventOnDay(p,day=cityDay()){return p.sessions?.length?p.sessions.some(s=>cityDay(s.begin)<=day&&cityDay(s.end)>=day):p.start_date<=day&&p.end_date>=day;}
+  function eventTonight(p,day=cityDay()){return p.sessions?.some(s=>cityDay(s.begin)<=day&&cityDay(s.end)>=day&&Date.parse(s.end)>Date.now()&&(cityDay(s.end)>day||Number(new Intl.DateTimeFormat('en-GB',{timeZone:cityZone(),hour:'2-digit',hourCycle:'h23'}).format(new Date(s.end)))>=18))||false;}
+  function cityLabels(){
+    $('cityPickerTitle').textContent=profile.name+' · changer de ville';$('cityEyebrow').textContent=profile.name.toUpperCase()+' & ALENTOURS';$('cityTodayTitle').textContent='Aujourd’hui à '+profile.name;
+    $('cityMapNote').querySelector('b').textContent=profile.name+', côté ville';document.querySelector('.brand .city').textContent=active?profile.name:'Toulouse';
+    $('cityTransport').closest('label').classList.toggle('hidden',profile.transport!=='tisseo');$('cityMunicipalAgenda').classList.toggle('hidden',profile.transport!=='tisseo');
+    $('viewTransport').textContent=profile.transport==='tisseo'?'Transports':'Arrêts';
+    $('cityDate').textContent=new Date().toLocaleDateString('fr-FR',{timeZone:cityZone(),weekday:'long',day:'numeric',month:'long'});
+    if(active){$('appTitle').innerHTML=h(profile.name)+' <em>Ville</em>';document.title=profile.name+' Ville — Explorer la ville';}
+  }
+  function applyProfile(p){
+    if(!p?.id)return;profile=p;epoch++;tourTicket++;isoRequest++;loadingCatalog=false;todayLoading=false;catalogError=false;data.clear();loading.clear();queue.length=0;catalog=[];categories.clear();selectedPlace=null;favoritesOnly=false;weather=null;alerts=null;myLocation=null;iso=null;isoOrigin=null;tourPoints=[];
+    for(const l of [layer,focusLayer,walkLayer,zoneLayer])l.clearLayers();$('cityDetail').classList.add('hidden');$('cityTourResult').textContent='';$('cityTransport').checked=false;renderTour();
+    try{localStorage.setItem('tisseo.city.profile',JSON.stringify(p));}catch{}const url=new URL(location.href);url.searchParams.set('city',p.id);history.replaceState(null,'',url);map.setView([p.lat,p.lon],14);cityLabels();loadCatalog();loadToday();syncTransport();
+  }
+
   let active = false, catalog = [], categories = new Map(), selected = new Set(), preset = 'all', initialized = false, myLocation = null;
   let selectedPlace = null, listLimit = 30, renderTimer, searchTimer, loadingCatalog = false, catalogError = false;
   const data = new Map(), loading = new Set(), markersById = new Map();
@@ -41,36 +64,37 @@
   const date = (value, withTime = false) => {
     if (!value) return 'date non fournie';
     const d = new Date(value.length === 10 ? `${value}T12:00:00` : value);
-    return Number.isFinite(d.getTime()) ? d.toLocaleString('fr-FR', { timeZone: 'Europe/Paris', day: 'numeric', month: 'short', year: 'numeric', ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}) }) : 'date non fournie';
+    return Number.isFinite(d.getTime()) ? d.toLocaleString('fr-FR', { timeZone: cityZone(), day: 'numeric', month: 'short', year: 'numeric', ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}) }) : 'date non fournie';
   };
-  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: cityZone(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
   const distance = (p) => map.distance(map.getCenter(), [p.lat, p.lon]);
   const distLabel = (d) => d < 1000 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1)} km`;
   function remember() {
     try { localStorage.setItem('tisseo.city.settings', JSON.stringify({ categories: [...selected], transport: $('cityTransport').checked, inView: $('cityInView').checked, period: $('cityPeriod').value })); } catch { /* stockage désactivé */ }
   }
   function syncTransport() {
-    const show = !active || $('cityTransport').checked;
+    const show = !active || (profile.transport==='tisseo' && $('cityTransport').checked);
     for (const l of [markerLayer, selLayer]) {
       if (show && !map.hasLayer(l)) map.addLayer(l);
       if (!show && map.hasLayer(l)) map.removeLayer(l);
     }
     for (const l of [shapeLayer, vehLayer, stopLayer, netLayer]) {
-      const wanted = !active || (l === netLayer && vectorOnly);
+      const wanted = !active || (profile.transport==='tisseo' && l === netLayer && vectorOnly);
       if (wanted && !map.hasLayer(l)) map.addLayer(l);
       if (!wanted && map.hasLayer(l)) map.removeLayer(l);
     }
   }
   function setActive(value, { persist = true } = {}) {
     active = Boolean(value);
+    $('sidebarToggle').textContent = active ? '☰ Explorer & réglages' : '☰ Transports';
     document.body.classList.toggle('city-view', active);
     for (const id of ['cityPanel', 'cityHeader', 'cityMapNote']) $(id).classList.toggle('hidden', !active);
     for (const id of ['transportPanel', 'transportStats', 'liveBadge', 'btnMap']) $(id).classList.toggle('hidden', active);
     $('viewCity').classList.toggle('active', active); $('viewCity').setAttribute('aria-pressed', String(active));
     $('viewTransport').classList.toggle('active', !active); $('viewTransport').setAttribute('aria-pressed', String(!active));
-    $('appTitle').innerHTML = active ? 'Toulouse <em>Ville</em>' : 'Tisséo <em>Live</em>';
-    document.title = active ? 'Toulouse Ville — Explorer la ville' : 'Tisséo Live — Véhicules en direct à Toulouse';
-    map.attributionControl.setPrefix(active ? 'Toulouse Métropole (Licence Ouverte) · OSM / Cyclocity (ODbL)' : 'Tisséo / Toulouse Métropole (ODbL)');
+    $('appTitle').innerHTML = active ? h(profile.name)+' <em>Ville</em>' : 'Tisséo <em>Live</em>';
+    document.title = active ? profile.name+' Ville — Explorer la ville' : 'Tisséo Live — Véhicules en direct à Toulouse';
+    map.attributionControl.setPrefix(active ? (profile.transport==='tisseo'?'Toulouse Métropole (Licence Ouverte) · OSM / Cyclocity (ODbL)':'© OpenStreetMap contributors · données publiques selon la ville') : 'Tisséo / Toulouse Métropole (ODbL)');
     $('btnFit').title = active ? 'Recentrer sur les lieux sélectionnés' : 'Zoomer sur les véhicules';
     $('btnGeo').title = active ? 'Explorer les lieux autour de moi' : 'Véhicules et arrêts autour de moi';
     $('btnRefresh').title = active ? 'Actualiser les données de la ville' : 'Actualiser';
@@ -86,7 +110,7 @@
         // utiles aux lieux de la ville ; le bouton de thème reste disponible.
         baseMode = 'light'; baseIdx = 0; tileErrors = 0;
         if (!vectorOnly && tileSets.light?.length) setBaseLayer();
-        map.setView([43.6047, 1.4442], 14);
+        map.setView([profile.lat, profile.lon], 14);
         loadCatalog();
         loadToday();
       }
@@ -99,7 +123,7 @@
       $('cityDetail').classList.add('hidden');
       renderAll();
     }
-    syncTransport();
+    cityLabels();syncTransport();
     if (persist) {
       const url = new URL(location.href);
       if (active) url.searchParams.set('vue', 'ville'); else url.searchParams.delete('vue');
@@ -110,14 +134,15 @@
   }
   async function loadCatalog() {
     if (loadingCatalog) return;
-    loadingCatalog = true; catalogError = false;
+    loadingCatalog = true; catalogError = false;const generation=epoch;
     $('cityFeedback').textContent = 'Chargement des catégories…';
     try {
-      const r = await fetch('/api/city/catalog', { signal: AbortSignal.timeout(10_000) });
+      const r = await fetch(cityUrl('/api/city/catalog'), { signal: AbortSignal.timeout(30_000) });
       if (!r.ok) throw new Error('Catalogue indisponible');
       const j = await r.json();
-      if (!Array.isArray(j.categories)) throw new Error('Catalogue incorrect');
-      catalog = j.categories;
+      if(generation!==epoch)return;if (!Array.isArray(j.categories)) throw new Error('Catalogue incorrect');
+      if(j.profile){const old=profile.name;profile=j.profile;cityLabels();if(old!==profile.name)map.setView([profile.lat,profile.lon],14);try{localStorage.setItem('tisseo.city.profile',JSON.stringify(profile));}catch{}}
+      catalog = j.categories;$('cityCoverage').textContent=j.notice||'Données publiques · couverture partielle, informations à vérifier auprès des lieux.';
       categories = new Map(catalog.map((c) => [c.id, c]));
       selected = new Set(Array.isArray(saved.categories) ? saved.categories.filter((id) => categories.has(id)) : ['bikes', 'parking', 'events', 'culture', 'parks', 'services']);
       if (selected.size < catalog.length) document.querySelectorAll('#cityPresets button').forEach((b) => { b.classList.remove('active'); b.setAttribute('aria-pressed', 'false'); });
@@ -125,9 +150,9 @@
       loadSelected();
       for (const id of ['events', 'works']) if (!data.has(id)) enqueue(id);
     } catch {
-      catalogError = true;
+      if(generation!==epoch)return;catalogError = true;
       $('cityFeedback').textContent = 'Le catalogue est indisponible. Clique sur ↻ pour réessayer.';
-    } finally { loadingCatalog = false; render(); }
+    } finally { if(generation===epoch){loadingCatalog = false; render();} }
   }
   function loadSelected() {
     for (const id of selected) if (!data.has(id) && !loading.has(id)) enqueue(id);
@@ -139,15 +164,15 @@
   }
   function pump() {
     while (busy < 4 && queue.length) {
-      const id = queue.shift(); busy++;
-      fetch(`/api/city/places?category=${encodeURIComponent(id)}`, { signal: AbortSignal.timeout(35_000) })
+      const id = queue.shift(); busy++;const generation=epoch;
+      fetch(cityUrl(`/api/city/places?category=${encodeURIComponent(id)}`), { signal: AbortSignal.timeout(50_000) })
         .then(async (r) => { if (!r.ok) throw new Error('Source indisponible'); return r.json(); })
-        .then((j) => { if (!Array.isArray(j.places)) throw new Error('Données incorrectes'); data.set(id, j); })
+        .then((j) => { if(generation!==epoch)return;if (!Array.isArray(j.places)) throw new Error('Données incorrectes'); data.set(id, j); })
         .catch(() => {
-          const old = data.get(id);
+          if(generation!==epoch)return;const old = data.get(id);
           data.set(id, { ...old, places: old?.places || [], status: old?.places?.length ? 'stale' : 'unavailable', message: 'Source indisponible. Clique sur ↻ pour réessayer.' });
         })
-        .finally(() => { loading.delete(id); busy--; rebuildMarkers(); renderCategories(); render(); renderDetail(); pump(); });
+        .finally(() => { busy--;if(generation===epoch){loading.delete(id);rebuildMarkers();renderCategories();render();renderDetail();}pump(); });
     }
   }
   function dateAllowed(p) {
@@ -157,19 +182,19 @@
     if ($('cityEventTag').value && !p.tags?.includes($('cityEventTag').value)) return false;
     if ($('cityPeriod').value === 'upcoming') return true;
     if ($('cityPeriod').value === 'tonight') {
-      return window.CE?.eventTonight(p, day) || false;
+      return eventTonight(p,day);
     }
     const end = new Date(`${day}T12:00:00Z`);
     if ($('cityPeriod').value === 'week') end.setUTCDate(end.getUTCDate() + 6);
     const lastDay = end.toISOString().slice(0, 10);
-    if (p.sessions?.length && window.CE) return p.sessions.some((s) => window.CE.parisDay(s.begin) <= lastDay && window.CE.parisDay(s.end) >= day);
+    if (p.sessions?.length && window.CE) return p.sessions.some((s) => cityDay(s.begin) <= lastDay && cityDay(s.end) >= day);
     return p.start_date <= lastDay && p.end_date >= day;
   }
   function allPlaces() {
     const q = norm($('citySearch').value.trim());
     const pool = favoritesOnly ? [...favorites.values()].map((p) => data.get(p.category)?.places.find((x) => x.id === p.id) || p) : [...selected].flatMap((id) => data.get(id)?.places || []);
-    return pool.filter((p) => categories.has(p.category) && dateAllowed(p) && (!q || norm(`${p.name} ${p.address} ${p.city} ${p.subtitle} ${p.description}`).includes(q))
-      && (!$('cityOpen').checked || (window.CE?.openingState(p.opening_hours) || p.opening_state) === 'open')
+    return pool.filter((p) => (p.city_id||'fr:31555')===profile.id && categories.has(p.category) && dateAllowed(p) && (!q || norm(`${p.name} ${p.address} ${p.city} ${p.subtitle} ${p.description}`).includes(q))
+      && (!$('cityOpen').checked || (profile.timezone==='Europe/Paris'?(window.CE?.openingState(p.opening_hours)||p.opening_state):p.opening_state) === 'open')
       && (!$('cityFree').checked || p.free_access === true || p.tags?.includes('free'))
       && (!$('cityAccessible').checked || p.wheelchair === 'yes') && (!$('cityVegetarian').checked || p.vegetarian === true)
       && (!iso || (window.CE?.walkingBand(p, iso.features) ?? Infinity) <= Number($('cityWalkMinutes').value)));
@@ -218,7 +243,7 @@
     const unavailable = [...selected].filter((id) => data.get(id)?.status === 'unavailable');
     const old = [...selected].filter((id) => data.get(id)?.status === 'stale');
     renderToday();
-    $('cityFavoriteCount').textContent = favorites.size;
+    $('cityFavoriteCount').textContent = [...favorites.values()].filter(p=>(p.city_id||'fr:31555')===profile.id).length;
     $('cityFavorites').classList.toggle('active', favoritesOnly); $('cityFavorites').setAttribute('aria-pressed', String(favoritesOnly));
     $('cityResultCount').textContent = places.length;
     $('cityHeaderText').textContent = pendingCount ? `${pendingCount} sources en cours…` : `${total.toLocaleString('fr-FR')} lieux & infos`;
@@ -240,8 +265,8 @@
     }).join(''));
     $('cityMore').classList.toggle('hidden', places.length <= listLimit);
     setHtml($('citySources'), [...selected].map((id) => {
-      const c = categories.get(id), d = data.get(id);
-      return `<div class="city-source"><b>${h(c.label)}</b><a href="${h(c.source.url)}" target="_blank" rel="noopener noreferrer">${h(c.source.label)} ↗</a><br>${h(c.source.license)}${d?.source_updated_at ? `<br>Données du ${h(date(d.source_updated_at, true))}` : ''}${d?.fetched_at ? `<br>Consultées le ${h(date(d.fetched_at, true))}` : ''}${d?.message ? `<br><span class="city-source-status">${h(d.message)}</span>` : ''}${id === 'events' ? '<br>Agenda public partiel. Consulte aussi l’agenda municipal.' : ''}</div>`;
+      const c = categories.get(id), d = data.get(id),source=d?.source||c.source;
+      return `<div class="city-source"><b>${h(c.label)}</b><a href="${h(source.url)}" target="_blank" rel="noopener noreferrer">${h(source.label)} ↗</a><br>${h(source.license)}${d?.source_updated_at ? `<br>Données du ${h(date(d.source_updated_at, true))}` : ''}${d?.fetched_at ? `<br>Consultées le ${h(date(d.fetched_at, true))}` : ''}${d?.message ? `<br><span class="city-source-status">${h(d.message)}</span>` : ''}${id === 'events' ? '<br>Agenda public partiel. Consulte aussi l’agenda municipal.' : ''}</div>`;
     }).join(''));
   }
   function selectPlace(p) {
@@ -272,7 +297,7 @@
       renderDetail(); rebuildMarkers(); render();
     };
     actions.prepend(favoriteButton);
-    const walkingButton = document.createElement('button'); walkingButton.id = 'cityWalk'; walkingButton.textContent = 'Y aller à pied'; walkingButton.onclick = () => walkTo(p); actions.append(walkingButton);
+    const walkingButton = document.createElement('button'); walkingButton.id = 'cityWalk'; walkingButton.textContent = 'Y aller à pied'; walkingButton.onclick = () => walkTo(p); actions.append(walkingButton);const step=document.createElement('button');step.id='cityTourAdd';step.textContent='Ajouter à ma balade';step.onclick=()=>{if(tourPoints.length>=6){toast('Six étapes maximum.');return;}if(tourPoints.at(-1)?.id===p.id){toast('Ce lieu est déjà la dernière étape.');return;}tourPoints.push(p);tourTicket++;walkLayer.clearLayers();$('cityTourResult').textContent='';renderTour();$('cityTourSteps').closest('details').open=true;toast('Étape ajoutée à la balade.');};actions.append(step);
     const sourceLink = $('cityDetail').querySelector('.city-detail-source a');
     if (p.source_label) sourceLink.textContent = `${p.source_label} ↗`;
     if (p.sessions?.length) {
@@ -282,6 +307,7 @@
     }
     $('cityDetailClose').onclick = () => { selectedPlace = null; $('cityDetail').classList.add('hidden'); rebuildMarkers(); render(); };
     $('cityJourney').onclick = () => {
+      if(profile.transport!=='tisseo'){window.open(`https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}&travelmode=transit`,'_blank','noopener,noreferrer');return;}
       $('jTo').value = `${p.lat},${p.lon}`;
       const from = myLocation || state.nearby;
       if (from) $('jFrom').value = `${from.lat},${from.lon}`;
@@ -292,7 +318,7 @@
   }
   function fit() {
     const points = allPlaces();
-    if (!points.length) { map.setView([43.6047, 1.4442], 13); return; }
+    if (!points.length) { map.setView([profile.lat, profile.lon], 13); return; }
     map.fitBounds(L.latLngBounds(points.map((p) => [p.lat, p.lon])).pad(.08), { maxZoom: 16 });
   }
   function refresh() {
@@ -302,17 +328,17 @@
     loadToday();
   }
   async function loadToday() {
-    if (todayLoading) return; todayLoading = true;
-    const result = await Promise.allSettled(['/api/city/weather', '/api/alerts'].map(async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15_000) }); if (!r.ok) throw new Error(); return r.json(); }));
-    weather = result[0].status === 'fulfilled' ? result[0].value : null;
-    alerts = result[1].status === 'fulfilled' ? result[1].value.alerts : null;
-    todayLoading = false; renderToday();
+    if (todayLoading) return; todayLoading = true;const generation=epoch;
+    const result = await Promise.allSettled([cityUrl('/api/city/weather'), ...(profile.transport==='tisseo'?['/api/alerts']:[])].map(async (u) => { const r = await fetch(u, { signal: AbortSignal.timeout(15_000) }); if (!r.ok) throw new Error(); return r.json(); }));
+    if(generation!==epoch)return;weather = result[0].status === 'fulfilled' ? result[0].value : null;
+    alerts = result[1]?.status === 'fulfilled' ? result[1].value.alerts : null;
+    todayLoading = false;cityLabels();renderToday();
   }
   function renderToday() {
-    const events = data.get('events')?.places.filter((p) => window.CE ? window.CE.eventOnDay(p) : p.start_date <= today() && p.end_date >= today());
+    const events = data.get('events')?.places.filter((p) => eventOnDay(p));
     const works = data.get('works')?.places.filter((p) => p.start_date <= today() && p.end_date >= today());
     const weatherText = weather ? `${Math.round(weather.temperature_2m)}° · ${weather.weather_code === 0 ? 'Ciel dégagé' : weather.weather_code <= 3 ? 'Nuages & éclaircies' : weather.weather_code <= 48 ? 'Brouillard' : weather.weather_code < 71 ? 'Pluie possible' : weather.weather_code < 86 ? 'Précipitations' : 'Orages possibles'}` : todayLoading ? 'Météo en cours…' : 'Météo indisponible';
-    setHtml($('cityToday'), `<b>${h(weatherText)}</b>${weather ? `<small>${weather.min}° / ${weather.max}° · pluie ${weather.rain_probability ?? '?'} %<br>Prévision <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · ${h(date(weather.fetched_at, true))}</small>` : ''}<div class="city-today-counts"><button data-today="events">${events?.length ?? '…'} sorties</button><button data-today="works">${works?.length ?? '…'} chantiers</button><button data-today="alerts">${alerts ? `${alerts.length} infos Tisséo` : 'Infos Tisséo indisponibles'}</button></div>${alerts?.length ? `<small>${h(alerts[0].title || alerts[0].header || alerts[0].header_text || alerts[0].description?.replace(/<[^>]*>/g, " ") || 'Perturbation signalée sur le réseau')}</small>` : ''}`);
+    setHtml($('cityToday'), `<b>${h(weatherText)}</b>${weather ? `<small>${weather.min}° / ${weather.max}° · pluie ${weather.rain_probability ?? '?'} %<br>Prévision <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a> · ${h(date(weather.fetched_at, true))}</small>` : ''}<div class="city-today-counts"><button data-today="events">${events?.length ?? '…'} sorties</button><button data-today="works">${works?.length ?? '…'} chantiers</button>${profile.transport==='tisseo'?`<button data-today="alerts">${alerts ? `${alerts.length} infos Tisséo` : 'Infos Tisséo indisponibles'}</button>`:''}</div>${alerts?.length ? `<small>${h(alerts[0].title || alerts[0].header || alerts[0].header_text || alerts[0].description?.replace(/<[^>]*>/g, " ") || 'Perturbation signalée sur le réseau')}</small>` : ''}`);
     $('cityToday').onclick = (e) => {
       const kind = e.target.closest('[data-today]')?.dataset.today; if (!kind) return;
       if (kind === 'alerts') { setActive(false); $('sidebar').classList.add('open'); return; }
@@ -353,8 +379,8 @@
     } catch (e) { toast(e.message || 'Parcours indisponible.'); }
   }
   $('viewCity').onclick = () => setActive(true);
-  $('viewTransport').onclick = () => setActive(false);
-  $('cityDate').textContent = new Date().toLocaleDateString('fr-FR', { timeZone: 'Europe/Paris', weekday: 'long', day: 'numeric', month: 'long' });
+  $('viewTransport').onclick = () => {if(profile.transport==='tisseo'){setActive(false);return;}setActive(true);selected=new Set(['stops']);favoritesOnly=false;resetPractical();loadSelected();rebuildMarkers();renderCategories();render();toast('Arrêts référencés · passages en direct non fournis.');};
+  $('cityDate').textContent = new Date().toLocaleDateString('fr-FR', { timeZone: cityZone(), weekday: 'long', day: 'numeric', month: 'long' });
   $('cityCategories').onclick = (e) => {
     const b = e.target.closest('[data-category]'); if (!b) return;
     const id = b.dataset.category;
@@ -388,7 +414,7 @@
     const b = e.target.closest('[data-intent]'); if (!b) return; intent = b.dataset.intent; favoritesOnly = false; resetPractical();
     selected = new Set(intent === 'tonight' ? ['events', 'food', 'culture', 'bikes'] : intent === 'stroll' ? ['parks', 'visits', 'water', 'toilets', 'bikes'] : ['events', 'parks', 'libraries', 'water', 'toilets']);
     $('cityPeriod').value = intent === 'tonight' ? 'tonight' : 'week'; $('cityEventTag').value = intent === 'family' ? 'family' : '';
-    $('cityTransport').checked = true; syncTransport(); loadSelected(); remember(); rebuildMarkers(); renderCategories(); render();
+    $('cityTransport').checked = profile.transport==='tisseo'; syncTransport(); loadSelected(); remember(); rebuildMarkers(); renderCategories(); render();
     document.querySelectorAll('[data-intent]').forEach((x) => { x.classList.toggle('active', x === b); x.setAttribute('aria-pressed', String(x === b)); });
   });
   $('cityAroundGeo').onclick = () => $('btnGeo').click();
@@ -412,8 +438,21 @@
     }
     rebuildMarkers(); render(); renderDetail();
   }, 60_000);
+
+  function renderTour(){
+    $('cityTourCount').textContent=tourPoints.length;
+    setHtml($('cityTourSteps'),tourPoints.map((p,i)=>`<div><b>${i+1}. ${h(p.name)}</b><div>${i?`<button data-step="${i}" data-move="-1" aria-label="Monter l’étape ${i+1}">↑</button>`:''}${i<tourPoints.length-1?`<button data-step="${i}" data-move="1" aria-label="Descendre l’étape ${i+1}">↓</button>`:''}<button data-step="${i}" data-remove="true">Retirer</button></div></div>`).join(''));
+    $('cityTourGo').disabled=tourPoints.length<2;
+  }
+  $('cityTourSteps').onclick=e=>{const b=e.target.closest('[data-step]');if(!b)return;const i=Number(b.dataset.step);if(b.dataset.remove)tourPoints.splice(i,1);else{const target=i+Number(b.dataset.move);[tourPoints[i],tourPoints[target]]=[tourPoints[target],tourPoints[i]];}tourTicket++;walkLayer.clearLayers();$('cityTourResult').textContent='';renderTour();};
+  $('cityTourClear').onclick=()=>{tourPoints=[];tourTicket++;walkLayer.clearLayers();$('cityTourResult').textContent='';renderTour();};
+  $('cityTourGo').onclick=async()=>{const ticket=++tourTicket;$('cityTourResult').textContent='Calcul des chemins piétons…';try{const points=tourPoints.map(p=>`${p.lat},${p.lon}`).join(';');const r=await fetch('/api/city/tour?points='+encodeURIComponent(points),{signal:AbortSignal.timeout(30000)});const j=await r.json();if(ticket!==tourTicket)return;if(!r.ok)throw new Error(j.error);walkLayer.clearLayers();const line=L.geoJSON({type:'Feature',geometry:j.geometry},{style:{color:'#b96e50',weight:5}}).addTo(walkLayer);tourPoints.forEach((p,i)=>L.marker([p.lat,p.lon],{icon:L.divIcon({className:'city-tour-marker',html:String(i+1),iconSize:[28,28],iconAnchor:[14,14]})}).bindTooltip(p.name).addTo(walkLayer));map.fitBounds(line.getBounds(),{padding:[35,35]});setHtml($('cityTourResult'),`<b>${Math.ceil(j.duration_s/60)} min à pied · ${distLabel(j.distance_m)}</b>${j.legs.map((l,i)=>`<details><summary>${i+1} → ${i+2} · ${Math.ceil(l.duration_s/60)} min</summary><ol>${l.instructions.map(s=>`<li>${h(s.text)}</li>`).join('')}</ol></details>`).join('')}<small>${h(j.notice)}</small>`);}catch(e){if(ticket===tourTicket)$('cityTourResult').textContent=e.message||'Balade indisponible';}};
+  $('cityNameGo').onclick=async()=>{const q=$('cityNameSearch').value.trim();if(q.length<2){$('cityPickerStatus').textContent='Saisis au moins deux lettres.';return;}$('cityPickerStatus').textContent='Recherche…';try{const r=await fetch('/api/cities/search?q='+encodeURIComponent(q),{signal:AbortSignal.timeout(30000)});const j=await r.json();if(!r.ok)throw new Error(j.error);$('cityPickerStatus').textContent=j.cities.length?'Choisis ta ville':'Aucune ville trouvée';setHtml($('cityChoices'),j.cities.map((p,i)=>`<button data-city-choice="${i}">${h(p.name)} · ${h(p.region||p.country)}</button>`).join(''));$('cityChoices').onclick=e=>{const b=e.target.closest('[data-city-choice]');if(!b)return;applyProfile(j.cities[Number(b.dataset.cityChoice)]);$('cityPickerTitle').closest('details').open=false;};}catch(e){$('cityPickerStatus').textContent=e.message||'Recherche indisponible';}};
+  $('cityNameSearch').onkeydown=e=>{if(e.key==='Enter')$('cityNameGo').click();};
+  $('cityAuto').onclick=()=>{$('cityPickerStatus').textContent='Localisation en cours…';$('btnGeo').click();};
+  renderTour();cityLabels();
   window.cityView = { get active() { return active; }, setActive, fit, refresh, syncTransport,
-    around(lat, lon) { myLocation = { lat, lon }; remember(); map.setView([lat, lon], 16); calculateAround(myLocation); },
+    async around(lat, lon) { const position={lat,lon};try{const r=await fetch(`/api/cities/detect?lat=${lat}&lon=${lon}`,{signal:AbortSignal.timeout(30000)});const j=await r.json();if(!r.ok)throw new Error(j.error);if(j.profile.id!==profile.id)applyProfile(j.profile);}catch(e){toast(e.message||'Ville non identifiée. Choisis-la par son nom.');}myLocation=position;remember();map.setView([lat,lon],16);calculateAround(myLocation); },
     showTransportVehicle() { if (active) setActive(false); },
   };
   const view = new URLSearchParams(location.search).get('vue');

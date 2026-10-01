@@ -390,3 +390,15 @@ npm run prepare-gtfs
 - GTFS statique : https://data.toulouse-metropole.fr/explore/dataset/tisseo-gtfs/
 - Licence : ODbL (Tisséo / Toulouse Métropole)
 - Fond de carte : © OpenStreetMap contributors · © Esri · CyclOSM · OpenTopoMap
+
+## Mode Ville multi-ville et Android natif
+
+Le mode Ville conserve le choix d’une ville et peut la détecter depuis une position autorisée. Le catalogue, les lieux, la météo et l’agenda suivent ce profil. Tisséo conserve ses API propres à Toulouse. Les données disponibles ailleurs sont présentées avec leur source et leur couverture ; l’application ne crée pas de passages en direct pour les autres réseaux.
+
+Routes supplémentaires : `/api/cities/search?q=`, `/api/cities/detect?lat=&lon=`, `/api/city/catalog?city=fr:69123`, `/api/city/places?city=fr:69123&category=parks`, `/api/city/weather?city=fr:69123`. Sans `city`, le profil Toulouse est conservé. Les identifiants `fr:CODE_INSEE` et `geo:LAT:LON` survivent au redémarrage du serveur. Les calculs à pied acceptent des coordonnées mondiales valides ; `/api/city/tour?points=LAT,LON;LAT,LON` calcule une balade de 2 à 6 étapes et limite sa longueur géographique à 20 km.
+
+Les lieux OSM sont limités à 6 km du centre choisi. Les exports publics Huwise disponibles pour la France, l’Australie et la Nouvelle-Zélande stabilisent plusieurs catégories ; les exports limités aux cinémas ou aux aires de jeux sont signalés. Overpass complète les données disponibles, par extraction bornée et partagée entre catégories, avec cache de 6 heures et message d’indisponibilité. La recherche Photon est limitée à une requête par seconde et mise en cache 24 heures. Les URL de services restent configurables : `CITY_GEOCODER_URL`, `CITY_OVERPASS_URL`, `CITY_ROUTING_URL`. Pour un volume important, configurer une source dédiée selon les [règles des instances Overpass](https://wiki.openstreetmap.org/wiki/Overpass_API#Public_Overpass_API_instances). Les exports utilisent la [requête géographique Huwise](https://help.opendatasoft.com/apis/ods-explore-v2/).
+
+La promenade stocke les distances quotidiennes localement. Les points et badges sont désactivés par défaut et activables dans Réglages, avec 10 points par 100 mètres enregistrés. La version web interrompt le suivi lorsqu’elle est masquée ; le suivi écran éteint utilise le service de localisation de l’[application Android native](android/README.md). Les points GPS ne sont pas envoyés au serveur. Chaque appareil conserve ses propres statistiques et réglages.
+
+Fonctions réalisées et idées de coopération : [FEATURES.md](FEATURES.md).

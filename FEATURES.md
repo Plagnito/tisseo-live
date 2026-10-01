@@ -1,48 +1,27 @@
-# Prochaines fonctions utiles
+# Ville & Promenade
 
-Le mode Ville et le mode Tisséo partagent une carte, des favoris et des parcours.
-Les deux ajouts immédiats de cette version Android sont le partage de lieux et
-la préparation d’une entrée de calendrier depuis un créneau réellement publié.
+## Disponible
 
-## Priorité 1 — les déplacements habituels
+- Une interface centrée sur trois usages : explorer, se déplacer, marcher. La version Android utilise des vues natives et MapLibre, sans WebView.
+- Recherche de ville, sélection conservée et détection depuis une position autorisée. Les lieux, l’agenda et la météo suivent le profil choisi. Les réponses et caches des villes précédentes sont isolés.
+- Tisséo à Toulouse : arrêts et lignes favoris, trajets enregistrés et recalculés à la consultation, widget des prochains passages, notifications facultatives sur les lignes choisies avec plage horaire. Android peut différer la vérification prévue toutes les 15 minutes.
+- Ailleurs : lieux publics dans un rayon de 6 km, arrêts OSM quand la source répond et accès aux itinéraires en transports dans l’application de cartes. Aucun passage en direct n’est inventé pour un réseau sans connecteur.
+- Balades de 2 à 6 étapes, réorganisation et calcul piéton par tronçon. Partage d’une liste de lieux dans Android, avec durée de marche estimée hors visites.
+- Promenade démarrée volontairement, pause/reprise, distance GPS estimée par jour, statistiques sur 7 et 30 jours et historique local. Le service Android continue écran éteint et s’arrête avec Terminer ; il ne se relance pas après une interruption du processus. Dans le navigateur, masquer la page arrête le suivi.
+- Gamification désactivée par défaut, activable dans les réglages : 10 points par tranche complète de 100 mètres enregistrés, un niveau tous les 500 points, badges de distance. Calculer un parcours ou ouvrir une fiche ne donne aucun point.
+- Défi quotidien personnalisable et partage volontaire du défi dans Android. Les destinataires choisissent leur propre objectif ; les distances GPS et les positions ne sont pas publiées.
 
-**Arrêts et lignes favoris, puis widget Android.** Retrouver en un geste ses
-prochains passages, et les consulter depuis l’écran d’accueil. Les API actuelles
-fournissent déjà les arrêts et les passages. Le widget devra montrer l’heure de
-mise à jour et distinguer prévision Tisséo et horaire théorique ; un résultat
-ancien ne devra pas conserver un compte à rebours présenté comme actuel.
+## Couverture
 
-**Trajets enregistrés.** Enregistrer un départ et une arrivée nommés, puis
-recalculer le trajet au moment du départ. Les favoris restent sur le téléphone.
-Le résultat d’un ancien calcul ne vaut pas un itinéraire disponible aujourd’hui.
+Les données varient selon la ville. Toulouse conserve ses sources spécialisées. Les exports OSM Huwise disponibles en France, Australie et Nouvelle-Zélande servent de sources stables pour plusieurs catégories ; certains exports couvrent seulement les cinémas ou les aires de jeux, ce qui est indiqué dans leurs fiches et sources. Overpass complète les catégories disponibles, avec caches, limites d’extraction et messages de panne. OpenAgenda ne fournit que les événements publiés dans sa base. Les horaires simples ne sont évalués que lorsqu’un fuseau est connu ; les informations inconnues ne passent pas les filtres pratiques.
 
-## Priorité 2 — les sorties faciles à organiser
+## Jouer à plusieurs : prochaines fonctions proposées
 
-**Suggestions selon la météo et le temps disponible.** Proposer des événements
-avec un créneau compatible, puis des idées parmi les parcs et lieux culturels.
-Le caractère intérieur / extérieur doit venir d’une donnée explicite ; les
-catégories actuelles ne suffisent pas à affirmer qu’un lieu est à l’abri.
+1. **Défis coopératifs de groupe.** Un code d’invitation, un objectif hebdomadaire commun et une contribution adaptée à chacun. Partager uniquement les totaux volontairement, avec pseudonyme ; aucun tracé GPS ou domicile.
+2. **Rallyes de découverte par équipes.** Une courte balade avec énigmes liées à des lieux documentés. Prévoir des variantes courtes et accessibles, sans encourager à manipuler le téléphone en traversant.
+3. **Badges collectifs.** Récompenser une balade ensemble ou la découverte de plusieurs quartiers, sans classement obligatoire ni pénalité après une journée sans marche.
+4. **Balades partagées.** Permettre de proposer des étapes à un groupe et de voter avant de partir, puis exporter le programme.
 
-**Parcours de balade avec étapes.** Choisir quelques lieux, calculer les tronçons
-piétons et afficher le temps total. Ajouter fontaines et toilettes à proximité
-sans garantir leur ouverture. Les chemins ombragés et les parcours sans marches
-attendent des données fiables avant d’être proposés comme tels.
+Ces fonctions en ligne nécessitent encore un service de groupes, des invitations et une gestion du consentement. Cette version propose déjà le partage Android des balades et défis, mais ne prétend pas synchroniser un groupe ou un classement.
 
-## Priorité 3 — être prévenu au bon moment
-
-**Alertes choisies pour les lignes favorites.** Notifications uniquement après
-activation explicite, sur une perturbation nouvelle ou modifiée, avec lien vers
-la source et réglage des plages horaires. Il faut d’abord stabiliser les
-identifiants d’alerte et gérer les restrictions Android sur le travail en
-arrière-plan ; aucun sondage permanent en arrière-plan n’est prévu actuellement.
-
-**Rappels de sorties.** Utiliser d’abord le calendrier Android déjà proposé dans
-les fiches. Des rappels internes ne seraient utiles qu’avec une gestion claire
-des annulations et changements de créneau dans la source.
-
-## Choix conseillé
-
-Commencer par les **arrêts favoris et trajets enregistrés**, puis leur widget :
-ils utilisent les données existantes et rendent l’app utile chaque jour.
-Les suggestions météo et balades à étapes viennent ensuite. Les notifications
-demandent davantage de suivi et une activation volontaire.
+Les prochaines intégrations de transport devront déclarer leur périmètre et leur source GTFS/GTFS-RT ou GBFS avant de proposer de vrais horaires ou disponibilités hors Toulouse.
