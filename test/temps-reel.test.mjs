@@ -278,9 +278,20 @@ test('prochains_passages_vers : ligne, sens et quais trouvés seuls, arrivée et
 });
 
 test('prochains_passages_vers : sans ligne directe, on oriente vers l\'itinéraire', async () => {
-  const r = await tool(createTools(svcL10()), 'prochains_passages_vers').handler({ depart: 'Fenouillet', arrivee: 'Fenouillet' });
+  // Un arrêt qu'aucune ligne ne relie aux autres.
+  const avecIsole = { ...stops, 'stop_point:ISO': { n: 'Isolé', lat: 43.75, lon: 1.55 } };
+  const svc = svcL10({
+    stops: avecIsole,
+    searchStops: (q) => Object.entries(avecIsole).filter(([, x]) => x.n.toLowerCase().startsWith(String(q).toLowerCase().slice(0, 5)))
+      .map(([id, x]) => ({ id, name: x.n, lat: x.lat, lon: x.lon, kind: 'point', served: true })),
+  });
+  const r = await tool(createTools(svc), 'prochains_passages_vers').handler({ depart: 'La Vache', arrivee: 'Isolé' });
   assert.equal(r.lignes_directes.length, 0);
   assert.match(r.note, /itineraire/);
+});
+
+test('prochains_passages_vers : même lieu au départ et à l\'arrivée, même refus que « itineraire »', async () => {
+  await assert.rejects(tool(createTools(svcL10()), 'prochains_passages_vers').handler({ depart: 'Fenouillet', arrivee: 'Fenouillet' }), /même arrêt/);
 });
 
 test('jour de service : un 00:25 du service de la veille est signalé', async () => {
@@ -376,4 +387,65 @@ test('passages temps réel : au terminus de départ, l\'heure annoncée est cell
   ] } }] };
   const d = m.collectDepartures(rt, t).get('stop_point:LV1')[0];
   assert.equal(heure(d.time), '07:58');
+});
+
+// --- perturbations appliquées aux outils (test sévère de ChatGPT, 02/10/2026) -------
+// Le serveur lit les arrêts non desservis dans le texte des alertes ; les outils
+// n'annoncent plus de passage à un quai fermé et ne proposent plus d'y monter.
+const { parseDisruptions } = await import('../lib/perturbations.mjs');
+const perturbe = (html) => {
+  const dis = parseDisruptions([{ id: 'al1', title: 'L10 : Déviation', url: 'https://exemple.test/l10', routes: ['r:L10'], description: html }], { routeById, variants, stops, now: T0 });
+  return svcL10({ disruptions: () => dis });
+};
+const DEVIATION = '<h1>🟠 Déviation ligne L10</h1><p><strong>Le mardi 29 septembre 2026</strong> : déviation ligne L10.<br />❌ <strong>Arrêts non desservis</strong><br /><em>Direction Fenouillet Ctre Cial</em> : <ul><li>Borderouge</li></ul>✔️ La ligne dessert ses autres arrêts.</p>';
+const COUPURE = '<h1>🟠 Ligne L10 : arrêt partiel</h1><p><strong>Le mardi 29 septembre 2026 dès 05h00</strong> : la ligne L10 est interrompue entre Borderouge et Fenouillet.<br />❌ <strong>Arrêts non desservis</strong> : <ul><li>Borderouge</li><li>Fenouillet Ctre Cial</li></ul></p>';
+
+test('perturbation : aucun passage annoncé à un arrêt non desservi, et la raison est dite', async () => {
+  const sans = await tool(createTools(svcL10()), 'prochains_passages').handler({ arret: 'Borderouge', ligne: 'L10', direction: 'Fenouillet' });
+  assert.ok(sans.passages.length > 0, 'sans perturbation, des passages');
+  const r = await tool(createTools(perturbe(DEVIATION)), 'prochains_passages').handler({ arret: 'Borderouge', ligne: 'L10', direction: 'Fenouillet' });
+  assert.deepEqual(r.passages, [], 'ni temps réel ni théorique à un quai fermé');
+  assert.equal(r.deja_partis, undefined, 'et rien n\'y est « passé »');
+  assert.equal(r.non_desservi[0].ligne, 'L10');
+  assert.deepEqual(r.non_desservi[0].arrets_non_desservis, ['Borderouge']);
+  assert.match(r.non_desservi[0].periode, /29 septembre/);
+  assert.match(r.resume, /NON DESSERVI/);
+  assert.match(r.note, /perturbation/);
+  // L'autre sens n'est pas concerné : il garde ses passages.
+  const retour = await tool(createTools(perturbe(DEVIATION)), 'prochains_passages').handler({ arret: 'Borderouge', ligne: 'L10', direction: 'La Vache' });
+  assert.ok(retour.passages.length > 0, 'sens La Vache : desservi');
+});
+
+test('perturbation : un trajet direct ne monte ni ne descend à un arrêt fermé', async () => {
+  const vers = tool(createTools(perturbe(DEVIATION)), 'prochains_passages_vers');
+  const ferme = await vers.handler({ depart: 'La Vache', arrivee: 'Borderouge' });
+  assert.deepEqual(ferme.trajets, []);
+  assert.match(ferme.resume, /IMPOSSIBLE/);
+  assert.deepEqual(ferme.perturbations[0].arrets_non_desservis, ['Borderouge']);
+  // Déviation : le bus saute Borderouge et continue — La Vache → Fenouillet reste direct.
+  const audela = await vers.handler({ depart: 'La Vache', arrivee: 'Fenouillet' });
+  assert.ok(audela.trajets.length > 0, 'au-delà de l\'arrêt fermé, la ligne reste utilisable');
+  assert.equal(audela.perturbations, undefined);
+});
+
+test('perturbation : une ligne coupée ne se traverse pas, même sur une course « temps réel »', async () => {
+  const vers = tool(createTools(perturbe(COUPURE)), 'prochains_passages_vers');
+  const r = await vers.handler({ depart: 'La Vache', arrivee: 'Fenouillet' });
+  assert.deepEqual(r.trajets, [], 'la course temps réel « b » est écartée elle aussi');
+  assert.match(r.resume, /L10 : trajet direct IMPOSSIBLE/);
+  assert.match(r.perturbations[0].effet, /interrompue/);
+});
+
+test('perturbation : la fiche d\'arrêt et l\'outil « perturbations » disent ce qui est fermé et quand', async () => {
+  const svc = perturbe(DEVIATION);
+  const alerte = { id: 'al1', title: 'L10 : Déviation', description: DEVIATION, url: 'https://exemple.test/l10', routes: ['r:L10'] };
+  const avecAlertes = { ...svc, live: async () => ({ snap: { vehicles: [], alerts: [alerte], perRoute: {}, rt_timestamp: T0 - 5 } }), liveOrNull: async () => ({ snap: { vehicles: [], alerts: [alerte], perRoute: {}, rt_timestamp: T0 - 5 } }) };
+  const fiche = await tool(createTools(avecAlertes), 'arret').handler({ arret: 'Borderouge' });
+  assert.equal(fiche.non_desservi[0].ligne, 'L10');
+  assert.ok(fiche.prochains_passages.every((p) => p.destination !== 'Fenouillet Ctre Cial'), 'aucun passage vers Fenouillet');
+  assert.deepEqual(fiche.perturbations[0].effets[0].arrets_non_desservis, ['Borderouge']);
+  const p = await tool(createTools(avecAlertes), 'perturbations').handler({ ligne: 'L10' });
+  assert.deepEqual(p.perturbations[0].effets[0].arrets_non_desservis, ['Borderouge']);
+  assert.match(p.perturbations[0].effets[0].periode, /mardi 29 septembre/);
+  assert.match(p.note, /APPLIQUÉS/);
 });

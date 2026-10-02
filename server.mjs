@@ -33,6 +33,7 @@ import { theoreticalVehicles } from './lib/theoretical.mjs';
 import { createMcpServer } from './lib/mcp.mjs';
 import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
 import { indexRealtime } from './lib/realtime.mjs';
+import { parseDisruptions, NO_DISRUPTION } from './lib/perturbations.mjs';
 import { createCityService, cityCatalog } from './lib/city.mjs';
 import { createCityDirectory, profileCatalog } from './lib/cities.mjs';
 import { createStore } from './lib/store.mjs';
@@ -167,6 +168,31 @@ function recordHistory(snap) {
 let computed = null; // { rtTimestamp, snap, departures }
 const ALERTS_HOLD_MS = 15 * 60_000;
 let lastAlerts = { list: [], at: 0 };
+
+// --- Perturbations lues comme des contraintes ---------------------------
+// Les alertes du flux ne portent, de structuré, que la ligne. Les arrêts non
+// desservis et les dates sont dans leur texte : lib/perturbations.mjs les en
+// tire. Sans cela, on annonçait des passages (théoriques) à des arrêts fermés
+// et l'on y faisait monter le voyageur. Relu quand les alertes changent, et
+// au moins toutes les dix minutes (une perturbation « momentanée », sans date,
+// vaut pour l'instant présent).
+let disruptionsMemo = { alerts: null, at: 0, parsed: null };
+function disruptions() {
+  const alerts = computed?.rt?.alerts ?? lastAlerts.list;
+  if (!alerts?.length) return null;
+  if (disruptionsMemo.alerts !== alerts || Date.now() - disruptionsMemo.at > 10 * 60_000) {
+    let parsed = null;
+    try { parsed = parseDisruptions(alerts, { routeById, variants, stops, now: Math.floor(Date.now() / 1000) }); }
+    catch (err) { console.warn('Perturbations illisibles :', String(err?.message || err)); }
+    if (parsed && disruptionsMemo.parsed?.closures.length !== parsed.closures.length) console.log(`Perturbations : ${parsed.closures.length} fermetures lues dans ${alerts.length} alertes.`);
+    disruptionsMemo = { alerts, at: Date.now(), parsed };
+  }
+  return disruptionsMemo.parsed;
+}
+// Vue du réseau à l'instant t (arrêts fermés, tronçons coupés).
+const disruptionsAt = (t) => disruptions()?.at(t) ?? NO_DISRUPTION;
+// Ce quai est-il fermé pour cette ligne à cet instant ? → la fermeture, ou null.
+const closedAt = (routeId, stopId, t) => disruptions()?.closedAt(routeId, stopId, t) ?? null;
 
 // --- Métro : véhicules théoriques ---------------------------------------
 // Le flux temps réel de Tisséo ne couvre pas le métro A/B, et le Téléo
@@ -496,8 +522,14 @@ function buildDepartures(id, c, nowSec, radiusM = 150) {
   const group = [...new Set([id, ...router.stopsNear(s.lat, s.lon, radiusM).map((x) => x.id)])];
   const rtSeen = new Set();
   const rt = [];
+  const closed = new Map(); // fermetures qui ont écarté au moins un passage
   for (const g of group) {
     for (const d of c.departures?.get(g) ?? []) {
+      // Quai non desservi par cette ligne à cette heure (perturbation) : le
+      // temps réel continue souvent d'y prédire un passage — le bus dévié garde
+      // sa course — mais il ne s'y arrêtera pas.
+      const closure = closedAt(d.route_id, g, d.time);
+      if (closure) { closed.set(`${closure.alert_id}|${closure.title}|${closure.route_id}`, closure); continue; }
       // Même ligne + même heure = même passage (le feed duplique
       // parfois deux trip_id pour un même véhicule).
       const k = `${d.line}|${d.destination}|${d.time}`;
@@ -513,6 +545,8 @@ function buildDepartures(id, c, nowSec, radiusM = 150) {
   const gtfs = [];
   for (const g of group) {
     for (const d of scheduleDepartures(schedules, g, nowSec, 12)) {
+      const closure = closedAt(d.route_id, g, d.time);
+      if (closure) { closed.set(`${closure.alert_id}|${closure.title}|${closure.route_id}`, closure); continue; }
       const k = `${d.route_id}|${d.dir}|${d.time}`;
       if (gtSeen.has(k)) continue;
       gtSeen.add(k);
@@ -520,15 +554,15 @@ function buildDepartures(id, c, nowSec, radiusM = 150) {
     }
   }
   gtfs.sort((a, b) => a.time - b.time);
-  return { group, rt, gtfs };
+  return { group, rt, gtfs, closed: [...closed.values()] };
 }
 
 // Passages fusionnés (RT + théorique) d'un arrêt ; un quai isolé (aucun
 // voisin avec service) élargit une fois le rayon de regroupement.
 function departuresAt(id, c, nowSec, n = 12) {
   let r = buildDepartures(id, c, nowSec);
-  if (!r.rt.length && !r.gtfs.length) r = buildDepartures(id, c, nowSec, 300);
-  return { points: r.group.length, departures: mergeDepartures(r.rt, r.gtfs, n) };
+  if (!r.rt.length && !r.gtfs.length && !r.closed.length) r = buildDepartures(id, c, nowSec, 300);
+  return { points: r.group.length, departures: mergeDepartures(r.rt, r.gtfs, n), closed: r.closed };
 }
 
 // Les n stop_points les plus proches d'un point, avec la distance.
@@ -558,6 +592,8 @@ app.get('/api/departures', ah(async (req, res) => {
     return {
       stop: { id, name: s.n, lat: s.lat, lon: s.lon, points: r.points },
       departures: r.departures,
+      // Lignes qui ne desservent pas cet arrêt en ce moment, et pourquoi.
+      ...(r.closed.length ? { closed: r.closed.map((x) => ({ line: x.line, route_id: x.route_id, title: x.title, url: x.url, whole_line: x.kind === 'ligne' || undefined })) } : {}),
     };
   });
   res.json({
@@ -567,7 +603,7 @@ app.get('/api/departures', ah(async (req, res) => {
     degraded: !c.snap && schedules ? true : undefined,
     unknown: bad,
     stops: out,
-    ...(out.length === 1 ? { stop: out[0].stop, departures: out[0].departures } : {}),
+    ...(out.length === 1 ? { stop: out[0].stop, departures: out[0].departures, closed: out[0].closed } : {}),
   });
 }));
 
@@ -750,7 +786,7 @@ app.get('/api/journey', ah(async (req, res) => {
     for (const t of droite) {
       if (essais >= JOURNEY_MAX_TENTATIVES) break;
       essais++;
-      const out = router.journey(pointDuRouteur(f), pointDuRouteur(t), at, journeyOpts);
+      const out = router.journey(pointDuRouteur(f), pointDuRouteur(t), at, { ...journeyOpts, blocked: disruptionsAt(at) });
       // On garde la dernière erreur pour la renvoyer telle quelle : elle porte
       // l'explication (« ces deux zones ne sont reliées par aucune ligne »),
       // qu'un « Trajet introuvable » générique faisait perdre.
@@ -846,7 +882,7 @@ function nextDeparture(routeId, board, alight, t) {
 // null = on ne sait pas (la ligne n'est alors pas écartée).
 function inService(routeId, t) {
   const nowish = Math.abs(t - Date.now() / 1000) < 30 * 60;
-  if (nowish && computed?.snap?.perRoute?.[routeId]) return true;
+  if (nowish && computed?.rt?.perRoute?.[routeId]) return true;
   return routeActiveAt(schedules, routeId, t);
 }
 // Heure d'ARRIVÉE théorique d'une course partie de board à depT : on
@@ -886,10 +922,19 @@ const journeyOpts = { nextDeparture, inService, scheduledArrival };
 // réponse mixte, écrasée par des POI moins pertinents. Deux requêtes, et le
 // champ « une adresse… » de l'interface tient enfin sa promesse.
 const GEOCODE_URL = 'https://data.geopf.fr/geocodage/search';
+const TOULOUSE_INSEE = '31555';
 const geoCache = new Map();
-async function geocodeOne(q, index) {
-  const url = `${GEOCODE_URL}?${new URLSearchParams({ q: q.slice(0, 200), index, limit: '5', lat: '43.6045', lon: '1.4442' })}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'TisseoLive/1.0 (plagnito.com)' } });
+// toulouse : ne chercher QUE dans la commune de Toulouse. Le géocodeur national
+// ne penche que mollement vers le point qu'on lui donne : « 8 chemin de la »
+// rend six chemins de Nantes, « rue alsace lorr » celle de Lavaur. Restreinte à
+// Toulouse, la même saisie rend l'adresse toulousaine. On pose donc les deux
+// questions — partout, puis à Toulouse — et l'on fusionne.
+// partial : saisie en cours (suggestions) : le dernier mot peut être un début.
+async function geocodeOne(q, index, { toulouse = false, partial = false } = {}) {
+  const params = { q: q.slice(0, 200), index, limit: '6', lat: '43.6045', lon: '1.4442' };
+  if (toulouse) params.citycode = TOULOUSE_INSEE;
+  if (partial) params.autocomplete = '1';
+  const res = await fetch(`${GEOCODE_URL}?${new URLSearchParams(params)}`, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'TisseoLive/1.0 (plagnito.com)' } });
   if (!res.ok) throw new Error(`géocodeur HTTP ${res.status}`);
   const json = await res.json();
   return (json.features ?? []).map((f) => {
@@ -900,26 +945,43 @@ async function geocodeOne(q, index) {
         ? `${p.toponym ?? [].concat(p.name ?? [])[0]}${city ? `, ${city}` : ''}`
         : p.label ?? p.name ?? null,
       type: p._type === 'poi' ? 'poi' : 'address',
+      // housenumber (adresse exacte) | street | locality | municipality ; catégorie pour un lieu.
+      kind: p._type === 'poi' ? [].concat(p.category ?? [])[0] ?? 'lieu' : p.type ?? 'address',
+      city: city ?? null,
       lat: f.geometry?.coordinates?.[1],
       lon: f.geometry?.coordinates?.[0],
       score: p.score ?? 0,
+      toulouse,
     };
   });
 }
 
-async function geocode(q) {
+async function geocode(q, { partial = false } = {}) {
   const key = String(q).trim().toLowerCase();
-  const hit = geoCache.get(key);
+  if (!key) return [];
+  const cle = (partial ? 'p|' : '') + key;
+  const hit = geoCache.get(cle);
   if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.list;
-  const reponses = await Promise.allSettled([geocodeOne(key, 'address'), geocodeOne(key, 'poi')]);
-  const list = reponses
-    .filter((r) => r.status === 'fulfilled')
-    .flatMap((r) => r.value)
-    .filter((l) => l.label && l.lat != null && l.lon != null && l.score >= 0.45)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 6);
-  if (geoCache.size > 1000) geoCache.delete(geoCache.keys().next().value);
-  geoCache.set(key, { at: Date.now(), list });
+  const reponses = await Promise.allSettled([
+    geocodeOne(key, 'address', { partial }), geocodeOne(key, 'poi', { partial }),
+    geocodeOne(key, 'address', { toulouse: true, partial }), geocodeOne(key, 'poi', { toulouse: true, partial }),
+  ]);
+  if (reponses.every((r) => r.status === 'rejected')) throw new Error('géocodeur injoignable');
+  // Un même lieu remonte par les deux questions : on garde sa meilleure note.
+  const parLieu = new Map();
+  for (const l of reponses.filter((r) => r.status === 'fulfilled').flatMap((r) => r.value)) {
+    if (!l.label || l.lat == null || l.lon == null) continue;
+    // Restreinte à une commune, la recherche note plus bas (il manque « Toulouse »
+    // dans la saisie) : seuil abaissé, et petit avantage au classement.
+    if (l.score < (l.toulouse ? (partial ? 0.35 : 0.4) : 0.45)) continue;
+    const k = `${l.label.toLowerCase()}|${l.lat.toFixed(4)},${l.lon.toFixed(4)}`;
+    const rang = l.score + (l.toulouse ? 0.12 : 0);
+    const old = parLieu.get(k);
+    if (!old || rang > old.rang) parLieu.set(k, { ...l, rang });
+  }
+  const list = [...parLieu.values()].sort((a, b) => b.rang - a.rang).slice(0, 8).map(({ rang: _r, toulouse: _t, ...l }) => l);
+  if (geoCache.size > 2000) geoCache.delete(geoCache.keys().next().value);
+  geoCache.set(cle, { at: Date.now(), list });
   return list;
 }
 
@@ -932,7 +994,7 @@ const outilsTransport = createTools({
     nearestStopPoints,
     journey: async (from, to, at, extra = {}) => {
       try { await getComputed(); } catch { /* sans RT : horaires théoriques */ }
-      return router.journey(from, to, at, { ...journeyOpts, ...extra });
+      return router.journey(from, to, at, { ...journeyOpts, blocked: disruptionsAt(at), ...extra });
     },
     track: (routeId, id) => history.get(`${routeId}|${id}`),
     scheduleUntil: () => scheduleUntil,
@@ -946,9 +1008,12 @@ const outilsTransport = createTools({
     reach: (fromStop, maxS, exclude, at) => {
       const excluded = new Set(exclude ?? []);
       for (const r of routes) if (inService(r.route_id, at) === false) excluded.add(r.route_id);
-      return router.reach(fromStop, maxS, excluded.size ? excluded : null);
+      const blocked = disruptionsAt(at ?? Math.floor(Date.now() / 1000));
+      return router.reach(fromStop, maxS, excluded.size ? excluded : null, blocked.size ? blocked : null);
     },
     nearestStop: (lat, lon) => router.nearestStop(lat, lon),
+    // Perturbations lues comme des contraintes (arrêts fermés, périodes).
+    disruptions,
     rideEstimate: (routeId, board, alight) => router.estimate(routeId, board, alight),
     fares,
     gtfsMeta,

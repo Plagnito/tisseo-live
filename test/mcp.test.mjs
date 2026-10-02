@@ -423,3 +423,54 @@ test('search / fetch : formes attendues par ChatGPT', async () => {
   assert.match(l.text, /premier départ 06:00/);
   await assert.rejects(tool(tools, 'fetch').handler({ id: 'n-importe-quoi' }), /non reconnu/);
 });
+
+// --- lieux : refuser plutôt que deviner (test sévère de ChatGPT, 02/10/2026) -------
+// Le géocodeur national penche vers Toulouse et rend toujours quelque chose.
+const sosies = async (q) => {
+  if (/gare/i.test(q)) return [{ label: 'Montaudran - Gare, Toulouse', type: 'poi', lat: 43.6050, lon: 1.4460 }];
+  if (/bordeaux/i.test(q)) return [{ label: 'Rue de Bordeaux 31200 Toulouse', type: 'address', lat: 43.6048, lon: 1.4457 }];
+  if (/cabanis/i.test(q)) return [{ label: 'Groupe Scolaire José Cabanis, Balma', type: 'poi', lat: 43.6046, lon: 1.4456 }];
+  if (/metz/i.test(q)) return [{ label: 'Rue de Metz 31000 Toulouse', type: 'address', lat: 43.6001, lon: 1.4470 }, { label: '25 Rue de Metz 31000 Toulouse', type: 'address', lat: 43.6002, lon: 1.4472 }];
+  return [];
+};
+
+test('lieux : une autre ville nommée n\'est jamais remplacée par un sosie toulousain', async () => {
+  for (const saisie of ['Paris Gare de Lyon', 'Bordeaux Saint-Jean', 'gare de Lyon Paris', 'Lyon Part-Dieu', 'Marseille Saint-Charles']) {
+    const { svc, calls } = fakeSvc({ geocode: sosies });
+    await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: saisie, arrivee: 'Capitole' }), /hors du réseau Tisséo/, saisie);
+    assert.equal(calls.journey.length, 0, `${saisie} : aucun trajet calculé`);
+    await assert.rejects(tool(createTools(svc), 'rechercher_lieu').handler({ recherche: saisie }), /hors du réseau Tisséo/, saisie);
+    await assert.rejects(tool(createTools(svc), 'arrets_proches').handler({ lieu: saisie }), /hors du réseau Tisséo/, saisie);
+  }
+});
+
+test('lieux : une ville qui nomme une RUE toulousaine reste une rue toulousaine', async () => {
+  // « rue de Metz » : Metz est précédée de « de », c'est une rue, pas la ville.
+  const { svc, calls } = fakeSvc({ geocode: sosies });
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: '25 rue de Metz', arrivee: 'Capitole' }), /arrêt du test/);
+  assert.equal(calls.journey[0].from.label, '25 Rue de Metz 31000 Toulouse', 'et le résultat qui porte le numéro passe devant la rue entière');
+});
+
+test('lieux : un résultat doit porter les mots qui DISTINGUENT le lieu demandé', async () => {
+  const { svc, calls } = fakeSvc({ geocode: sosies });
+  // « gare » seul ne reconnaît pas « Gare xyzzy » dans « Montaudran - Gare ».
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: 'Gare xyzzy', arrivee: 'Capitole' }), /Lieu introuvable/);
+  // Deux mots sur trois ne suffisent pas : la médiathèque n'est pas le groupe scolaire.
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: 'médiathèque José Cabanis', arrivee: 'Capitole' }), /Lieu introuvable/);
+  assert.equal(calls.journey.length, 0);
+});
+
+test('lieux : une saisie vide ou faite d\'espaces est refusée avant tout géocodage', async () => {
+  const { svc, calls } = fakeSvc();
+  await assert.rejects(tool(createTools(svc), 'rechercher_lieu').handler({ recherche: '    ' }), /Recherche vide/);
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: '   ', arrivee: 'Capitole' }), /Lieu vide/);
+  assert.equal(calls.geocode.length, 0);
+});
+
+test('lieux : « rechercher_lieu » rend le même identifiant d\'arrêt que les autres outils', async () => {
+  const { svc } = fakeSvc();
+  const r = await tool(createTools(svc), 'rechercher_lieu').handler({ recherche: 'Jean Jaurès' });
+  const pp = await tool(createTools(svc), 'prochains_passages').handler({ arret: 'Jean Jaurès' });
+  assert.equal(r.arrets[0].arret_id, pp.arret.arret_id);
+  assert.equal(r.arrets[0].quais, 2);
+});

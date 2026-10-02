@@ -484,3 +484,37 @@ test('sonde des tuiles : le résultat est mis en cache (une seule passe réseau)
   await probe();
   assert.equal(calls, TILE_PROVIDERS.length, 'la sonde ne doit pas relancer un provider déjà testé');
 });
+
+// --- service après minuit ------------------------------------------------------
+// Un passage noté 25:10 dans les horaires du vendredi a lieu le SAMEDI à 01:10 :
+// pour le trouver à 01:00 le samedi, il faut regarder le service de LA VEILLE.
+// Le 02/10/2026, le code regardait le lendemain (« jour - (-1) ») : après minuit,
+// plus aucun horaire théorique — le dernier métro du vendredi soir n'existait pas.
+const nuit = loadSchedules({
+  patterns: [['20261002'], ['20261003']], // vendredi, samedi
+  lines: { M: { 0: { headsign: 'Terminus', stops: {
+    A: { 0: [84600, 90600, 95400], 1: [19320, 19980] }, // ven. 23:30, 25:10, 26:30 — sam. 05:22, 05:33
+    B: { 0: [84680, 90680, 95480], 1: [19400, 20080] },
+    C: { 0: [84760, 90760, 95560], 1: [19480, 20160] },
+  } } } },
+}, { routeById: new Map([['M', { short_name: 'A', color: 'db001b', text_color: 'ffffff', type: 1 }]]), modeOf: () => 'Métro' });
+const sam = (h, mi = 0) => Math.floor(new Date(2026, 9, 3, h, mi, 0).getTime() / 1000);
+
+test('scheduleDepartures : après minuit, les passages du service de la veille sont retrouvés', async () => {
+  const { scheduleDepartures, routeActiveAt } = await import('../lib/schedules.mjs');
+  const a = scheduleDepartures(nuit, 'A', sam(1, 0), 5, 2 * 3600);
+  assert.deepEqual(a.map((d) => d.time), [sam(1, 10), sam(2, 30)], 'samedi 01:00 → 25:10 et 26:30 du vendredi');
+  assert.ok(a.every((d) => d.service_day === '20261002'), 'rattachés au service du vendredi');
+  assert.equal(routeActiveAt(nuit, 'M', sam(1, 0)), true, 'la ligne roule encore à 01:00');
+  assert.equal(routeActiveAt(nuit, 'M', sam(3, 30)), false, 'plus rien entre 02:30 et 05:22');
+  const matin = scheduleDepartures(nuit, 'A', sam(3, 30), 5, 3 * 3600);
+  assert.deepEqual(matin.map((d) => d.time), [sam(5, 22), sam(5, 33)], 'après le dernier, le premier du matin');
+  assert.equal(matin[0].service_day, '20261003');
+});
+
+test('activeRuns : une rame partie avant minuit roule encore après', () => {
+  // Course du vendredi 25:10 (samedi 01:10) : à 01:11, elle est entre A et B.
+  const runs = activeRuns(nuit, 'M', '0', sam(1, 11), ['A', 'B', 'C']);
+  assert.equal(runs.length, 1, 'la course de 25:10 est en cours le samedi à 01:11');
+  assert.equal(runs[0].times[0], sam(1, 10));
+});
