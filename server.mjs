@@ -269,11 +269,14 @@ app.use((req, res, next) => {
   };
   next();
 });
-// Le service worker ne doit JAMAIS être gardé par un cache intermédiaire : le
-// 02/10/2026, le CDN servait encore l'ancien sw.js plus de huit heures après un
-// déploiement (malgré max-age=300), et les navigateurs restaient tenus par un
-// service worker qui cassait la connexion. Les trois en-têtes visent le
-// navigateur, les CDN en général, et Cloudflare en particulier.
+// Le service worker ne devrait jamais être gardé par un cache : le 02/10/2026,
+// le CDN servait encore l'ancien sw.js plus de huit heures après un déploiement
+// (malgré max-age=300), et les navigateurs restaient tenus par un service
+// worker qui cassait la connexion. Ces en-têtes le demandent — mais, MESURÉ le
+// même jour, la zone Cloudflare garde quand même les .js (« HIT » 23 s après
+// ce no-store). Ce qui fait VRAIMENT arriver un nouveau sw.js est donc son
+// adresse : la version de `register('sw.js?v=…')` dans app.js, que
+// test/versions.test.mjs oblige à relever dès qu'un fichier servi change.
 app.get('/sw.js', (req, res) => {
   res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'CDN-Cache-Control': 'no-store', 'Cloudflare-CDN-Cache-Control': 'no-store' })
     .type('application/javascript').sendFile(join(__dirname, 'public', 'sw.js'));

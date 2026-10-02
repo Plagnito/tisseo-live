@@ -344,6 +344,13 @@ mois, et sans ça le métro perdrait ses horaires le jour où la fenêtre expire
 déploiement, et **rien ne le régénère** — c'est le seul dossier du service à sauvegarder.
 Côté Atlas, le client SSO `tisseo-live` est déclaré dans `plugins/comet-sso.js`.
 
+**Avant de pousser un changement de `public/`** : le CDN garde les `.js` et `.css` par
+adresse, des heures durant, quels que soient les en-têtes de cache (mesuré le 02/10/2026 :
+l'ancien `sw.js` encore servi huit heures après un déploiement). Un fichier modifié sans
+changer d'adresse n'atteint donc pas les navigateurs. Relever la version (`?v=…`) partout —
+`index.html`, `sw.js`, et `register('sw.js?v=…')` dans `app.js` — puis
+`node scripts/versions.mjs --ecrire`. `npm test` échoue tant que ce n'est pas fait.
+
 ## La carte, et ce qui se passe quand elle n'y est plus
 
 Le fond de carte n'est jamais posé à l'aveugle. Le serveur **sonde** chaque

@@ -1,0 +1,13 @@
+{
+  "version": "20261002-1.2.0-web2",
+  "empreintes": {
+    "app.js": "551d35e61a633f15",
+    "city.css": "a1123695fb2781dd",
+    "city.js": "ad25028b953ac5e5",
+    "compte.css": "719c7114dee2349e",
+    "compte.js": "21940f44e56445e6",
+    "styles.css": "8bd8170d53373cc6",
+    "sw.js": "668dae29110d60c7",
+    "walking.js": "a7322e6386a71c2f"
+  }
+}

@@ -23,6 +23,7 @@
     "verifier:performance": "node test/performance.mjs",
     "verifier:vitesse": "node test/vitesse.mjs",
     "verifier-mcp": "node scripts/verifier-mcp.mjs",
+    "verifier:versions": "node scripts/versions.mjs",
     "supervised": "node updater/supervisor.cjs"
   },
   "dependencies": {
