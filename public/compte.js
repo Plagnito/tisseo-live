@@ -86,6 +86,18 @@
   }
   const age = (s) => (s < 60 ? `il y a ${s} s` : s < 3600 ? `il y a ${Math.round(s / 60)} min` : `il y a ${Math.round(s / 3600)} h`);
 
+  // --- dessins ------------------------------------------------------------------
+  // Les icônes et illustrations viennent de art.js (les mêmes que l'application
+  // Android). Elles sont décoratives : chaque bloc garde son texte.
+  const ic = (nom) => (window.Art ? window.Art.icon(nom) : '');
+  const ill = (nom) => (window.Art ? window.Art.ill(nom) : '');
+  const pastille = (nom, ton = '') => `<span class="cpt-pastille ${ton}">${ic(nom)}</span>`;
+  const promesse = (nom, ton, titre, texte) => `<li>${pastille(nom, ton)}<div><b>${titre}</b><span>${texte}</span></div></li>`;
+  const vide = (dessin, titre, texte) => `<div class="cpt-vide">${ill(dessin)}<b>${titre}</b><span>${texte}</span></div>`;
+  const iconeMode = (mode) => { const m = String(mode || '').toLowerCase(); return m.includes('métro') || m.includes('metro') ? 'metro' : m.includes('tram') ? 'tram' : m.includes('téléo') || m.includes('teleo') ? 'cable' : 'bus'; };
+  // La couleur d'une ligne : la liste des lignes que la carte a déjà chargée.
+  const ligneConnue = (code) => { try { return (state.routes || []).find((r) => r.short_name === code) || null; } catch { return null; } };
+
   // --- rendu --------------------------------------------------------------------
   function rendre() {
     const marque = document.getElementById('compteEtat');
@@ -94,26 +106,35 @@
     if (!etat.connecte) {
       const retour = encodeURIComponent(`/?compte=1${params.get('partage') ? `&partage=${encodeURIComponent(params.get('partage'))}` : ''}`);
       corps.innerHTML = `
-        <p class="cpt-note">${etat.panne ? h(etat.panne) : 'Avec un compte Atlas, tes trajets te suivent d’un appareil à l’autre : enregistre ceux que tu fais souvent, planifie-les, partage-les avec tes amis.'}</p>
-        <a class="mini on cpt-large" href="/api/auth/connexion?retour=${retour}">Se connecter avec Atlas</a>
-        <p class="cpt-note cpt-fin">Sans compte, la carte et l’itinéraire restent entièrement utilisables.</p>`;
+        ${etat.panne ? `<p class="cpt-alerte">${ic('alert')}${h(etat.panne)}</p>` : ''}
+        <div class="cpt-hero">${ill('account')}</div>
+        <h3 class="cpt-accroche">Tes trajets te suivent partout</h3>
+        <ul class="cpt-promesses">
+          ${promesse('bookmark', 'chaud', 'Enregistre tes trajets', 'Ceux que tu fais souvent, recalculés d’un geste.')}
+          ${promesse('bell', 'vert', 'Planifie', 'Un jour précis, ou chaque semaine à la même heure.')}
+          ${promesse('friends', '', 'Partage avec tes amis', 'Un trajet, ou ta position pour une durée choisie.')}
+        </ul>
+        <a class="mini on cpt-large" href="/api/auth/connexion?retour=${retour}">${ic('account')}Se connecter avec Atlas</a>
+        <p class="cpt-note cpt-ligne-note">${ic('lock')}<span>La connexion se fait chez Atlas : ce site ne voit jamais ton mot de passe.</span></p>
+        <p class="cpt-note cpt-ligne-note">${ic('check')}<span>Sans compte, la carte et l’itinéraire restent entièrement utilisables.</span></p>`;
       return;
     }
     corps.innerHTML = `
-      <div class="cpt-qui"><span>Connecté : <b>${h(etat.compte.pseudo)}</b></span><button class="mini" data-action="deconnexion">Se déconnecter</button></div>
+      <div class="cpt-qui">${pastille('account')}<span>Connecté : <b>${h(etat.compte.pseudo)}</b></span><button class="mini" data-action="deconnexion">${ic('logout')}Se déconnecter</button></div>
       ${vueFormulaire()}
-      <div class="rowhead"><h2>Mes trajets <span>${etat.trajets.length || ''}</span></h2></div>
+      <div class="rowhead"><h2>${ic('route')}Mes trajets <span>${etat.trajets.length || ''}</span></h2></div>
       ${etat.trajets.length ? `<ul class="cpt-liste">${etat.trajets.map(vueTrajet).join('')}</ul>`
-        : '<p class="cpt-note">Calcule un itinéraire, puis « Enregistrer ce trajet » : il restera ici.</p>'}
-      <div class="rowhead"><h2>Planifiés <span>${etat.planifies.length || ''}</span></h2></div>
+        : vide('empty', 'Aucun trajet enregistré', 'Calcule un itinéraire, puis « Enregistrer ce trajet » : il restera ici.')}
+      <div class="rowhead"><h2>${ic('calendar')}Planifiés <span>${etat.planifies.length || ''}</span></h2></div>
       ${etat.planifies.length ? `<ul class="cpt-liste">${etat.planifies.map(vuePlan).join('')}</ul>`
-        : '<p class="cpt-note">Un trajet à faire un jour précis, ou chaque semaine à la même heure : planifie-le depuis un trajet enregistré.</p>'}
-      <div class="rowhead"><h2>Avec mes amis</h2><button class="mini" data-action="position">📍 Partager ma position</button></div>
+        : vide('plan', 'Rien de planifié', 'Un jour précis, ou chaque semaine à la même heure : planifie depuis un trajet enregistré.')}
+      <div class="rowhead"><h2>${ic('friends')}Avec mes amis</h2><button class="mini" data-action="position">${ic('target')}Partager ma position</button></div>
       ${vuePartages()}
-      <details class="cpt-plus" id="cptAssistants"><summary>Assistants (ChatGPT, Claude…)</summary><div id="cptAssistantsCorps">${vueAssistants()}</div></details>
-      <details class="cpt-plus"><summary>Mes données</summary>
-        <p class="cpt-note">Le serveur garde ton pseudo Atlas, tes trajets enregistrés et planifiés, et tes partages en cours. Les positions partagées ne sont jamais enregistrées : elles restent en mémoire le temps du partage.</p>
-        <button class="mini cpt-danger" data-action="supprimer-compte">Tout effacer et me déconnecter</button>
+      <details class="cpt-plus" id="cptAssistants"><summary>${ic('assistant')}Assistants (ChatGPT, Claude…)</summary><div id="cptAssistantsCorps">${vueAssistants()}</div></details>
+      <details class="cpt-plus"><summary>${ic('lock')}Mes données</summary>
+        <p class="cpt-note cpt-ligne-note">${ic('devices')}<span>Le serveur garde ton pseudo Atlas, tes trajets enregistrés et planifiés, et tes partages en cours.</span></p>
+        <p class="cpt-note cpt-ligne-note">${ic('target')}<span>Les positions partagées ne sont jamais enregistrées : elles restent en mémoire le temps du partage.</span></p>
+        <button class="mini cpt-danger" data-action="supprimer-compte">${ic('trash')}Tout effacer et me déconnecter</button>
       </details>`;
   }
 
@@ -124,26 +145,28 @@
 
   function vueTrajet(t) {
     return `<li class="cpt-item" data-id="${h(t.id)}">
-      <div class="cpt-tete"><b>${h(t.nom)}</b>${t.utilisations ? `<small>${t.utilisations}×</small>` : ''}</div>
-      ${sousTitre(t)}
+      <div class="cpt-corps-item">${pastille('route')}<div class="cpt-textes">
+        <div class="cpt-tete"><b>${h(t.nom)}</b>${t.utilisations ? `<small>${t.utilisations}×</small>` : ''}</div>
+        ${sousTitre(t)}</div></div>
       <div class="cpt-actions">
-        <button class="mini on" data-action="calculer" data-id="${h(t.id)}">Calculer</button>
-        <button class="mini" data-action="planifier" data-id="${h(t.id)}">Planifier</button>
-        <button class="mini" data-action="partager" data-id="${h(t.id)}">Partager</button>
-        <button class="mini" data-action="supprimer-trajet" data-id="${h(t.id)}" title="Supprimer ce trajet" aria-label="Supprimer le trajet ${h(t.nom)}">✕</button>
+        <button class="mini on" data-action="calculer" data-id="${h(t.id)}">${ic('route')}Calculer</button>
+        <button class="mini" data-action="planifier" data-id="${h(t.id)}">${ic('calendar')}Planifier</button>
+        <button class="mini" data-action="partager" data-id="${h(t.id)}">${ic('share')}Partager</button>
+        <button class="mini cpt-icone" data-action="supprimer-trajet" data-id="${h(t.id)}" title="Supprimer ce trajet" aria-label="Supprimer le trajet ${h(t.nom)}">${ic('trash')}</button>
       </div></li>`;
   }
 
   function vuePlan(p) {
     const c = etat.calculs.get(p.id);
     return `<li class="cpt-item${p.passe ? ' cpt-passe' : ''}" data-id="${h(p.id)}">
-      <div class="cpt-tete"><b>${h(p.nom)}</b><small>${p.passe ? 'passé' : h(quand(p.prochaine))}</small></div>
-      <div class="cpt-sous">${lieux(p)}<br>${h(rythme(p))}</div>
+      <div class="cpt-corps-item">${pastille('calendar', 'chaud')}<div class="cpt-textes">
+        <div class="cpt-tete"><b>${h(p.nom)}</b><small>${p.passe ? 'passé' : h(quand(p.prochaine))}</small></div>
+        <div class="cpt-sous">${lieux(p)}<br>${h(rythme(p))}</div></div></div>
       ${c ? vueCalcul(c) : ''}
       <div class="cpt-actions">
-        ${p.passe ? '' : `<button class="mini on" data-action="itineraire" data-id="${h(p.id)}">${c ? 'Recalculer' : 'Itinéraire'}</button>`}
-        <button class="mini" data-action="partager" data-id="${h(p.id)}">Partager</button>
-        <button class="mini" data-action="supprimer-plan" data-id="${h(p.id)}" title="Supprimer ce trajet planifié" aria-label="Supprimer le trajet planifié ${h(p.nom)}">✕</button>
+        ${p.passe ? '' : `<button class="mini on" data-action="itineraire" data-id="${h(p.id)}">${ic('route')}${c ? 'Recalculer' : 'Itinéraire'}</button>`}
+        <button class="mini" data-action="partager" data-id="${h(p.id)}">${ic('share')}Partager</button>
+        <button class="mini cpt-icone" data-action="supprimer-plan" data-id="${h(p.id)}" title="Supprimer ce trajet planifié" aria-label="Supprimer le trajet planifié ${h(p.nom)}">${ic('trash')}</button>
       </div></li>`;
   }
 
@@ -154,36 +177,54 @@
     if (c.erreur) return `<div class="cpt-calcul cpt-erreur">${h(c.erreur)}</div>`;
     const i = c.itineraire;
     const alertes = [c.avertissement, ...(i.alertes ?? []), i.attention].filter(Boolean);
+    // La consigne rédigée par le serveur reste dans la page, pour un lecteur d'écran :
+    // la frise la montre, elle ne la remplace pas.
+    const dite = (e) => `<span class="sr-only">${h(e.instruction ?? '')}</span>`;
+    const etape = (e) => {
+      if (e.type === 'trajet') {
+        const r = ligneConnue(e.ligne), couleur = r?.color ?? '64706c', encre = r?.text_color ?? 'ffffff';
+        return `<li class="jleg ride" style="--lc:#${h(couleur)}"><span class="jrail" aria-hidden="true"></span><div class="jbody">${dite(e)}
+          <div class="jstop"><time>${h(e.depart ?? '')}</time><strong>${h(e.monter_a ?? '')}</strong></div>
+          <b><span class="dline" style="background:#${h(couleur)};color:#${h(encre)}">${h(e.ligne)}</span>${ic(iconeMode(e.mode))}<span class="jmode">${e.direction ? `vers ${h(e.direction)}` : h(e.mode ?? '')}${e.duree_min ? ` · ${e.duree_min} min` : ''}</span></b>
+          ${e.statut ? `<span class="jtime">${h(e.statut)}</span>` : ''}
+          <div class="jstop"><time>${h(e.arrivee ?? '')}</time><strong>${h(e.descendre_a ?? '')}</strong></div></div></li>`;
+      }
+      if (e.type === 'marche') {
+        return `<li class="jleg walk"><span class="jrail" aria-hidden="true"></span><div class="jbody">${dite(e)}<b>${ic('walk')} ${e.duree_min ?? '?'} min à pied</b><span>${h(e.de ?? '')} → ${h(e.vers ?? '')}</span></div></li>`;
+      }
+      return `<li class="jleg walk"><span class="jrail" aria-hidden="true"></span><div class="jbody"><span>${h(e.instruction ?? '')}</span></div></li>`;
+    };
     return `<div class="cpt-calcul">
-      <b>${i.jour ? `${h(i.jour)} · ` : ''}départ ${h(i.partir_a)} → arrivée ${h(i.arriver_a ?? i.arrivee_estimee_non_fiable ?? '?')}</b>
-      <span>${i.duree_min} min${i.correspondances ? ` · ${i.correspondances} correspondance${i.correspondances > 1 ? 's' : ''}` : ''}${i.tarif?.ticket ? ` · ${h(i.tarif.ticket)}` : ''}</span>
-      <ol>${(i.etapes ?? []).map((e) => `<li>${h(e.instruction)}</li>`).join('')}</ol>
-      ${alertes.map((a) => `<p class="cpt-alerte">⚠ ${h(a)}</p>`).join('')}
-      <p class="cpt-note">${h(i.fiabilite ?? '')}</p></div>`;
+      <div class="jhead"><b>${i.duree_min} min</b><span>${i.jour ? `${h(i.jour)} · ` : ''}départ ${h(i.partir_a)} → arrivée ${h(i.arriver_a ?? i.arrivee_estimee_non_fiable ?? '?')}${i.correspondances ? ` · ${i.correspondances} correspondance${i.correspondances > 1 ? 's' : ''}` : ''}${i.tarif?.ticket ? ` · ${h(i.tarif.ticket)}` : ''}</span></div>
+      ${alertes.map((a) => `<p class="cpt-alerte">${ic('alert')}${h(a)}</p>`).join('')}
+      <ol class="jlegs">${(i.etapes ?? []).map(etape).join('')}</ol>
+      <p class="cpt-note cpt-ligne-note">${ic('info')}<span>${h(i.fiabilite ?? '')}</span></p></div>`;
   }
 
   function vuePartages() {
     const { recus, envoyes } = etat.partages;
     if (!recus.length && !envoyes.length) {
-      return '<p class="cpt-note">Tes amis sont tes contacts Atlas. Partage-leur un trajet ou, pour un temps limité, ta position.</p>';
+      return vide('share', 'Aucun partage en cours', 'Tes amis sont tes contacts Atlas. Partage-leur un trajet ou, pour un temps limité, ta position.');
     }
     const fin = (p) => (p.type === 'position' ? `jusqu’à ${h(heure(p.expire))}` : '');
     const corpsPartage = (p) => {
-      if (p.type === 'position') return `📍 Position en direct ${fin(p)}${p.trajet?.a ? `<br>vers ${h(p.trajet.a.texte)}` : ''}`;
+      if (p.type === 'position') return `Position en direct ${fin(p)}${p.trajet?.a ? `<br>vers ${h(p.trajet.a.texte)}` : ''}`;
       return `${p.trajet.nom ? `<b>${h(p.trajet.nom)}</b><br>` : ''}${lieux(p.trajet)}${p.trajet.heure ? `<br>${h(rythme(p.trajet))}` : ''}`;
     };
     const recu = (p) => `<li class="cpt-item${params.get('partage') === p.id ? ' cpt-vise' : ''}" data-id="${h(p.id)}">
+      <div class="cpt-corps-item">${pastille(p.type === 'position' ? 'target' : 'route', 'vert')}<div class="cpt-textes">
       <div class="cpt-tete"><b>${h(p.de.pseudo)}</b><small>${p.type === 'position' ? 'en direct' : 'trajet'}</small></div>
-      <div class="cpt-sous">${corpsPartage(p)}${p.message ? `<br><i>« ${h(p.message)} »</i>` : ''}</div>
+      <div class="cpt-sous">${corpsPartage(p)}${p.message ? `<br><i>« ${h(p.message)} »</i>` : ''}</div></div></div>
       <div class="cpt-actions">
         ${p.type === 'position'
           ? `<button class="mini on" data-action="suivre" data-id="${h(p.id)}">${suivi.id === p.id ? 'Ne plus suivre' : 'Voir sur la carte'}</button>`
           : `<button class="mini on" data-action="voir-partage" data-id="${h(p.id)}">Calculer</button><button class="mini" data-action="garder-partage" data-id="${h(p.id)}">Enregistrer</button>`}
-        <button class="mini" data-action="retirer-partage" data-id="${h(p.id)}" title="Retirer de ma liste" aria-label="Retirer ce partage de ma liste">✕</button>
+        <button class="mini cpt-icone" data-action="retirer-partage" data-id="${h(p.id)}" title="Retirer de ma liste" aria-label="Retirer ce partage de ma liste">${ic('close')}</button>
       </div></li>`;
     const envoye = (p) => `<li class="cpt-item" data-id="${h(p.id)}">
+      <div class="cpt-corps-item">${pastille(p.type === 'position' ? 'target' : 'share', p.type === 'position' ? 'chaud' : '')}<div class="cpt-textes">
       <div class="cpt-tete"><b>→ ${h(p.vers.map((d) => d.pseudo).join(', '))}</b><small>${p.type === 'position' ? 'en direct' : 'trajet'}</small></div>
-      <div class="cpt-sous">${corpsPartage(p)}${p.type === 'position' ? `<br>${emission.id === p.id ? `<span id="cptEmission">${h(emission.texte || 'Envoi de la position…')}</span>` : 'Aucune position envoyée depuis cet onglet.'}${p.assistants ? '<br>Lisible par les assistants de ces amis.' : ''}` : ''}</div>
+      <div class="cpt-sous">${corpsPartage(p)}${p.type === 'position' ? `<br>${emission.id === p.id ? `<span id="cptEmission">${h(emission.texte || 'Envoi de la position…')}</span>` : 'Aucune position envoyée depuis cet onglet.'}${p.assistants ? '<br>Lisible par les assistants de ces amis.' : ''}` : ''}</div></div></div>
       <div class="cpt-actions">
         ${p.type === 'position' && emission.id !== p.id ? `<button class="mini on" data-action="reprendre-position" data-id="${h(p.id)}">Envoyer ma position d’ici</button>` : ''}
         <button class="mini${p.type === 'position' ? ' cpt-danger' : ''}" data-action="arreter-partage" data-id="${h(p.id)}">${p.type === 'position' ? 'Arrêter le partage' : 'Ne plus partager'}</button>
@@ -444,8 +485,8 @@
     const zone = document.createElement('div');
     zone.className = 'cpt-apres';
     zone.innerHTML = etat.connecte
-      ? '<button class="mini" data-apres="enregistrer">☆ Enregistrer ce trajet</button><button class="mini" data-apres="planifier">Planifier</button><button class="mini" data-apres="partager">Partager</button>'
-      : `<a class="mini" href="/api/auth/connexion?retour=${encodeURIComponent('/?compte=1')}">Se connecter pour enregistrer ce trajet</a>`;
+      ? `<button class="mini" data-apres="enregistrer">${ic('bookmark')}Enregistrer ce trajet</button><button class="mini" data-apres="planifier">${ic('calendar')}Planifier</button><button class="mini" data-apres="partager">${ic('share')}Partager</button>`
+      : `<a class="mini" href="/api/auth/connexion?retour=${encodeURIComponent('/?compte=1')}">${ic('account')}Se connecter pour enregistrer ce trajet</a>`;
     boite.appendChild(zone);
   }
   new MutationObserver(apresResultat).observe($('jResults'), { childList: true });

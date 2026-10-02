@@ -33,7 +33,7 @@
     $('cityPickerTitle').textContent=profile.name+' · changer de ville';$('cityEyebrow').textContent=profile.name.toUpperCase()+' & ALENTOURS';$('cityTodayTitle').textContent='Aujourd’hui à '+profile.name;
     $('cityMapNote').querySelector('b').textContent=profile.name+', côté ville';document.querySelector('.brand .city').textContent=active?profile.name:'Toulouse';
     $('cityTransport').closest('label').classList.toggle('hidden',profile.transport!=='tisseo');$('cityMunicipalAgenda').classList.toggle('hidden',profile.transport!=='tisseo');
-    $('viewTransport').textContent=profile.transport==='tisseo'?'Transports':'Arrêts';
+    $('viewTransportLabel').textContent=profile.transport==='tisseo'?'Transports':'Arrêts';
     $('cityDate').textContent=new Date().toLocaleDateString('fr-FR',{timeZone:cityZone(),weekday:'long',day:'numeric',month:'long'});
     if(active){$('appTitle').innerHTML=h(profile.name)+' <em>Ville</em>';document.title=profile.name+' Ville — Explorer la ville';}
   }
@@ -86,7 +86,7 @@
   }
   function setActive(value, { persist = true } = {}) {
     active = Boolean(value);
-    $('sidebarToggle').textContent = active ? '☰ Explorer & réglages' : '☰ Transports';
+    $('sidebarToggleLabel').textContent = active ? 'Explorer & réglages' : 'Itinéraire, lignes, compte';
     document.body.classList.toggle('city-view', active);
     for (const id of ['cityPanel', 'cityHeader', 'cityMapNote']) $(id).classList.toggle('hidden', !active);
     for (const id of ['transportPanel', 'transportStats', 'liveBadge', 'btnMap']) $(id).classList.toggle('hidden', active);

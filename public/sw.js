@@ -1,9 +1,9 @@
 // Service worker Tisséo Live — cache du shell applicatif uniquement.
 // Les données temps réel (/api/*) ne sont JAMAIS mises en cache ici.
-const CACHE = 'tisseo-live-v13';
+const CACHE = 'tisseo-live-v14';
 const GEO = 'tisseo-geo-v1'; // géométrie du réseau : survit à une coupure
 const SHELL = [
-  './', './index.html', './styles.css?v=20261002-1.2.0-web2', './app.js?v=20261002-1.2.0-web2', './city.css?v=20261002-1.2.0-web2', './city.js?v=20261002-1.2.0-web2', './walking.js?v=20261002-1.2.0-web2', './compte.css?v=20261002-1.2.0-web2', './compte.js?v=20261002-1.2.0-web2', './manifest.json', './icon.svg', './lib/city-explore.mjs', './lib/walk-rules.mjs',
+  './', './index.html', './styles.css?v=20261002-1.3.0-web1', './app.js?v=20261002-1.3.0-web1', './city.css?v=20261002-1.3.0-web1', './city.js?v=20261002-1.3.0-web1', './walking.js?v=20261002-1.3.0-web1', './compte.css?v=20261002-1.3.0-web1', './compte.js?v=20261002-1.3.0-web1', './art.js?v=20261002-1.3.0-web1', './mobile.css?v=20261002-1.3.0-web1', './mobile.js?v=20261002-1.3.0-web1', './manifest.json', './icon.svg', './lib/city-explore.mjs', './lib/walk-rules.mjs',
   './vendor/leaflet.js', './vendor/leaflet.css', './vendor/leaflet.markercluster.js',
   './vendor/MarkerCluster.css', './vendor/MarkerCluster.Default.css',
   './vendor/images/marker-icon.png', './vendor/images/marker-icon-2x.png',

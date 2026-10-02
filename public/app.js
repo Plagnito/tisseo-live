@@ -1026,18 +1026,28 @@ $('lineList').addEventListener('click', onLineListClick);
 const journeyLayer = L.layerGroup().addTo(map);
 let journey = null;
 
+// Une étape d'itinéraire en frise : à gauche les heures, au milieu un rail (à la
+// couleur de la ligne, ou en pointillés à pied), à droite ce qu'on fait. Le
+// balisage garde ce dont le reste dépend : `li.jleg[data-leg]`, `b .dline`, `.jtime`.
+const artIcon = (nom) => (window.Art ? window.Art.icon(nom) : '');
+const modeIcon = (mode) => { const m = String(mode || '').toLowerCase(); return m.includes('métro') || m.includes('metro') ? 'metro' : m.includes('tram') ? 'tram' : m.includes('téléo') || m.includes('teleo') ? 'cable' : 'bus'; };
 function journeyLegHtml(leg) {
   if (leg.type === 'walk') {
-    return `<li class="jleg walk"><b>🚶 ${Math.round(leg.seconds / 60)} min</b>` +
-      `<span>${escapeHtml(leg.from)} → ${escapeHtml(leg.to)}</span></li>`;
+    const min = Math.max(1, Math.round(leg.seconds / 60));
+    const change = leg.from === leg.to;
+    return `<li class="jleg walk"><span class="jrail" aria-hidden="true"></span><div class="jbody">` +
+      `<b>${artIcon('walk')} ${change ? `Correspondance · ${min} min` : `${min} min à pied`}</b>` +
+      `<span>${change ? escapeHtml(leg.to) : `${escapeHtml(leg.from)} → ${escapeHtml(leg.to)}`}</span></div></li>`;
   }
   const dep = leg.depart ? fmtTime(leg.depart) : '';
   const arr = leg.arrive ? fmtTime(leg.arrive) : '';
-  return `<li class="jleg" data-leg="${escapeHtml(leg.route_id)}" data-from="${escapeHtml(leg.from_id)}" data-to="${escapeHtml(leg.to_id)}">` +
-    `<b><span class="dline" style="background:#${leg.color};color:#${leg.text_color}">${escapeHtml(leg.line)}</span> ${escapeHtml(leg.from)} → ${escapeHtml(leg.to)}</b>` +
-    `<span class="jtime">${dep} – ${arr}` +
-    `${leg.transfer_s ? ` <em>+${Math.round(leg.transfer_s / 60)} min de correspondance</em>` : ''}` +
-    `${leg.real ? '' : ' <em>estimé</em>'}</span></li>`;
+  return `<li class="jleg ride" style="--lc:#${escapeHtml(leg.color)}" data-leg="${escapeHtml(leg.route_id)}" data-from="${escapeHtml(leg.from_id)}" data-to="${escapeHtml(leg.to_id)}">` +
+    `<span class="jrail" aria-hidden="true"></span><div class="jbody">` +
+    `<div class="jstop"><time>${dep}</time><strong>${escapeHtml(leg.from)}</strong></div>` +
+    `<b><span class="dline" style="background:#${leg.color};color:#${leg.text_color}">${escapeHtml(leg.line)}</span>${artIcon(modeIcon(leg.mode))}<span class="jmode">${escapeHtml(leg.mode || '')}${leg.seconds ? ` · ${Math.max(1, Math.round(leg.seconds / 60))} min` : ''}</span></b>` +
+    `<span class="jtime">${leg.real ? 'temps réel' : '<em>estimé</em>'}` +
+    `${leg.transfer_s ? ` <em>+${Math.round(leg.transfer_s / 60)} min de correspondance</em>` : ''}</span>` +
+    `<div class="jstop"><time>${arr}</time><strong>${escapeHtml(leg.to)}</strong></div></div></li>`;
 }
 
 function renderJourney() {
@@ -1062,7 +1072,7 @@ function renderJourney() {
     `<div class="jhead"><b>${Math.round((journey.duration_s || 0) / 60)} min</b>` +
     `<span>départ ${fmtTime(journey.depart_at)} · arrivée ${fmtTime(journey.arrive_at)}` +
     `${journey.transfers ? ` · ${journey.transfers} correspondance${journey.transfers > 1 ? 's' : ''}` : ' · direct'}</span></div>` +
-    (warnings.length ? `<div class="jwarn">⚠ ${warnings.map(escapeHtml).join('<br>⚠ ')}</div>` : '') +
+    (warnings.length ? `<div class="jwarn">${warnings.map((w) => `<span>${artIcon('alert')}${escapeHtml(w)}</span>`).join('')}</div>` : '') +
     `<ol class="jlegs">${legs.map(journeyLegHtml).join('')}</ol>`);
   box.querySelectorAll('li.jleg[data-leg]').forEach((li) => {
     li.onclick = () => focusJourneyLeg(li.dataset.leg, li.dataset.from, li.dataset.to);
@@ -1614,7 +1624,7 @@ function connectStream() {
 
 // PWA : mise en cache du shell applicatif
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-  navigator.serviceWorker.register('sw.js?v=20261002-1.2.0-web2', { updateViaCache: 'none' }).catch(() => {});
+  navigator.serviceWorker.register('sw.js?v=20261002-1.3.0-web1', { updateViaCache: 'none' }).catch(() => {});
 }
 
 // deep link ?ligne=L1 (nom court ou route_id)

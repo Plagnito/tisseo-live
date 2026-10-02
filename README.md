@@ -401,6 +401,14 @@ faire tourner la carte.
    boutons de fond de carte et de thème restent à l'écran ; les cibles
    tactiles font 44 px. Vérifié sur 360, 390 et 820 px
    (`npm run test:e2e:telephone`).
+ - **Téléphone, présentation** (`public/mobile.css`, `public/mobile.js`) : sous 820 px,
+   l'en-tête tient en deux lignes (où l'on est et le choix de la vue, puis les compteurs) ;
+   les commandes de la carte flottent sur la carte ; le panneau est une **feuille** qui
+   monte du bas — on la tire par sa poignée, elle s'efface quand une fiche s'ouvre sur la
+   carte. L'itinéraire se lit en **frise** (heures, ligne à sa couleur, marche en
+   pointillés), à toute largeur. Les emojis ont laissé place à des **icônes dessinées** :
+   `public/art.js` est généré par `node android/scripts/make-art.mjs`, depuis les mêmes
+   tracés que l'application Android — ne pas le modifier à la main.
  - **Trois moteurs** : Chromium, Firefox et WebKit, y compris le pont vers
    `lib/`, le push SSE, le service worker et le hors ligne
    (`npm run test:e2e:navigateurs`). Firefox et WebKit demandent un

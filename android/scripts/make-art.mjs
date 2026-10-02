@@ -99,6 +99,14 @@ const ICONES = {
   plus: [S('M12,5V19M5,12H19', 2)],
   sun: [S(C(12, 12, 4)), S('M12,2.6V5M12,19V21.4M2.6,12H5M19,12H21.4M5.4,5.4L7.1,7.1M16.9,16.9L18.6,18.6M5.4,18.6L7.1,16.9M16.9,7.1L18.6,5.4')],
   logout: [S('M10,4.5H6.5a2,2 0 0,0 -2,2V17.5a2,2 0 0,0 2,2H10'), S('M14.5,8L18.5,12L14.5,16M18.5,12H9.5')],
+  // — surtout pour le site : commandes de carte, formulaire, feuille —
+  fit: [S('M4,9V4.5H8.5M15.5,4.5H20V9M20,15V19.5H15.5M8.5,19.5H4V15')],
+  layers: [S('M12,3.6L20.5,8L12,12.4L3.5,8Z'), S('M3.5,12L12,16.4L20.5,12M3.5,16L12,20.4L20.5,16')],
+  contrast: [S(C(12, 12, 9)), F('M12,3a9,9 0 0,1 0,18Z')],
+  search: [S(C(10.5, 10.5, 6.5)), S('M15.4,15.4L20.5,20.5', 2)],
+  close: [S('M6,6L18,18M18,6L6,18', 2)],
+  swap: [S('M8,4V20M8,20L4.5,16.5M8,20L11.5,16.5M16,20V4M16,4L12.5,7.5M16,4L19.5,7.5')],
+  chevron_up: [S('M6,14.5L12,8.5L18,14.5', 2)],
   toilets: [F(C(8, 5, 1.6)), F(C(16, 5, 1.6)), S('M8,8.4V14M6,20V14H10V20M6,10.6H10M16,8.4L13.6,15H18.4ZM15,15V20M17,15V20M12,3.5V20.5', 1.5)],
 };
 
@@ -207,6 +215,43 @@ for (const f of readdirSync(dossier)) if (/^(ic|ill)_[a-z_]+\.xml$/.test(f) && f
 for (const [nom, e] of Object.entries(ICONES)) writeFileSync(join(dossier, `ic_${nom}.xml`), xmlDe(e, 24, 24, 24, 24));
 for (const [nom, e] of Object.entries(ILLUSTRATIONS)) writeFileSync(join(dossier, `ill_${nom}.xml`), xmlDe(e, 320, 150, 320, 150));
 console.log(`${Object.keys(ICONES).length} icônes et ${Object.keys(ILLUSTRATIONS).length} illustrations écrites dans res/drawable/.`);
+
+// --- le site : les mêmes tracés, en SVG en ligne -----------------------------------
+// Les icônes y sont en « currentColor » : elles prennent la couleur du texte voisin,
+// donc suivent d'elles-mêmes le thème sombre (Transports) et le thème clair (Ville).
+{
+  const chemin = (e, encre) => `<path d="${e.d}" fill="${e.fill ? (encre && e.fill === INK ? 'currentColor' : e.fill) : 'none'}"${e.stroke ? ` stroke="${encre && e.stroke === INK ? 'currentColor' : e.stroke}" stroke-width="${e.w}" stroke-linecap="round" stroke-linejoin="round"` : ''}/>`;
+  const icones = Object.fromEntries(Object.entries(ICONES).map(([k, e]) => [k, e.map((x) => chemin(x, true)).join('')]));
+  const dessins = Object.fromEntries(Object.entries(ILLUSTRATIONS).map(([k, e]) => [k, e.map((x) => chemin(x, false)).join('')]));
+  const js = [
+    '// Généré par android/scripts/make-art.mjs : ne pas modifier à la main.',
+    "// Les icônes et illustrations du site — les mêmes tracés que l'application Android.",
+    '(() => {',
+    "  'use strict';",
+    '  const I = ' + JSON.stringify(icones) + ';',
+    '  const D = ' + JSON.stringify(dessins) + ';',
+    '  const Art = {',
+    '    /** Une icône au trait, à la couleur du texte. Décorative : le libellé voisin porte le sens. */',
+    "    icon(nom, classe) { return I[nom] ? '<svg class=\"ic' + (classe ? ' ' + classe : '') + '\" viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\">' + I[nom] + '</svg>' : ''; },",
+    '    /** Une illustration, dans ses couleurs. */',
+    "    ill(nom, classe) { return D[nom] ? '<svg class=\"ill' + (classe ? ' ' + classe : '') + '\" viewBox=\"0 0 320 150\" aria-hidden=\"true\" focusable=\"false\">' + D[nom] + '</svg>' : ''; },",
+    '    has(nom) { return nom in I; },',
+    "    /** Pose les icônes demandées par le balisage : <… data-ic=\"bus\">. Le texte de l'élément est conservé. */",
+    '    poser(racine) {',
+    "      for (const e of (racine || document).querySelectorAll('[data-ic]')) {",
+    "        if (e.firstElementChild && e.firstElementChild.classList.contains('ic')) continue;",
+    "        e.insertAdjacentHTML('afterbegin', Art.icon(e.dataset.ic));",
+    '      }',
+    '    },',
+    '  };',
+    '  window.Art = Art;',
+    '  Art.poser();',
+    '})();',
+    '',
+  ].join('\n');
+  writeFileSync(join(ici, '..', '..', 'public', 'art.js'), js);
+  console.log(`public/art.js écrit (${Math.round(js.length / 1024)} ko).`);
+}
 
 const i = process.argv.indexOf('--apercu');
 if (i > 0 && process.argv[i + 1]) {

@@ -84,6 +84,29 @@ for (const tel of TELEPHONES) {
   const partCarte = m.carte ? (m.carte.w * m.carte.h) / (tel.width * tel.height) : 0;
   ok(partCarte > 0.2, `la carte reste visible (${Math.round(partCarte * 100)} % de l'écran)`);
 
+  // Présentation téléphone : l'en-tête ne mange plus l'écran (il en prenait près de la
+  // moitié), les commandes de la carte flottent sur la carte, le panneau est une feuille
+  // dont seule la poignée dépasse tant qu'on ne l'ouvre pas.
+  const pres = await page.evaluate(() => {
+    const boite = (e) => { const b = e.getBoundingClientRect(); return { x: Math.round(b.x), y: Math.round(b.y), w: Math.round(b.width), h: Math.round(b.height) }; };
+    const carte = boite(document.querySelector('.mapwrap'));
+    const outils = [...document.querySelectorAll('.map-tools button')].filter((b) => b.offsetParent !== null).map(boite);
+    const feuille = boite(document.getElementById('sidebar'));
+    const poignee = boite(document.getElementById('sidebarToggle'));
+    return {
+      entete: boite(document.querySelector('.topbar')).h, carte, outils, feuille, poignee,
+      contenuCache: getComputedStyle(document.querySelector('.sidebar-body')).visibility === 'hidden',
+      emojis: [...document.querySelectorAll('.topbar button, .map-tools button, .planner > summary')].filter((e) => /\p{Extended_Pictographic}/u.test(e.textContent)).length,
+      icones: document.querySelectorAll('.topbar .ic, .map-tools .ic').length,
+    };
+  });
+  ok(pres.entete <= tel.height * 0.24, `l'en-tête tient en deux lignes (${pres.entete} px, soit ${Math.round(100 * pres.entete / tel.height)} % de l'écran)`);
+  ok(pres.outils.length >= 4 && pres.outils.every((b) => b.w >= 44 && b.h >= 44 && b.y >= pres.carte.y && b.x + b.w <= tel.width),
+    `les commandes de la carte flottent sur la carte, à 44 px (${pres.outils.length} boutons)`);
+  ok(pres.poignee.h >= 44 && pres.poignee.y + pres.poignee.h <= tel.height + 1 && pres.feuille.y >= tel.height - 80 && pres.contenuCache,
+    `fermée, la feuille ne laisse voir que sa poignée (haut à y=${pres.feuille.y}, écran ${tel.height})`);
+  ok(pres.emojis === 0 && pres.icones >= 8, `des icônes dessinées, plus d'emojis, dans l'en-tête et les commandes (${pres.icones} icônes, ${pres.emojis} emoji)`);
+
   // Cibles tactiles : 40 px est le plancher usuel (WCAG 2.1 AA).
   const petits = m.boutons.filter((b) => b.h > 0 && (b.h < 32 || b.w < 32));
   ok(petits.length === 0, `toutes les cibles tactiles font au moins 32 px`
@@ -154,6 +177,12 @@ for (const tel of TELEPHONES) {
     const s = document.querySelector('.sidebar');
     return !!s && s.getBoundingClientRect().x >= -1;
   }), 'le panneau s\'ouvre bien');
+  const ouverte = await page.evaluate(() => {
+    const f = document.getElementById('sidebar').getBoundingClientRect(), t = document.querySelector('.topbar').getBoundingClientRect();
+    return { haut: Math.round(f.y), bas: Math.round(f.bottom), sousEntete: Math.round(f.y - t.bottom), visible: getComputedStyle(document.querySelector('.sidebar-body')).visibility !== 'hidden', expanded: document.getElementById('sidebarToggle').getAttribute('aria-expanded') };
+  });
+  ok(ouverte.visible && ouverte.sousEntete >= 60 && ouverte.bas <= tel.height + 1 && ouverte.expanded === 'true',
+    `ouverte, la feuille monte du bas et laisse ${ouverte.sousEntete} px de carte au-dessus`);
 
   const vol = await page.evaluate(() => {
     const e = document.getElementById('planner');
@@ -178,6 +207,12 @@ for (const tel of TELEPHONES) {
   }));
   ok(res.etapes > 0 || res.erreur, `calcul d'itinéraire sur téléphone (${res.duree || res.erreur || 'rien'})`);
   await page.screenshot({ path: join(TMP, `tisseo-${tel.nom}-itin.png`) });
+
+  // Une fiche qui s'ouvre sur la carte ne doit pas rester cachée derrière la feuille.
+  await page.click('#statVehiclesBtn');
+  await page.waitForTimeout(800);
+  ok(await page.evaluate(() => !document.getElementById('inventory').classList.contains('hidden') && !document.getElementById('sidebar').classList.contains('open')),
+    'ouvrir une fiche sur la carte efface la feuille');
 
   if (erreurs.length) ok(false, `erreurs JavaScript : ${erreurs.slice(0, 2).join(' | ')}`);
   else ok(true, 'aucune erreur JavaScript');

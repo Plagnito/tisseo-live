@@ -41,53 +41,54 @@ __cssChain([
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css'
 ]);
 </script>
-<link rel="stylesheet" href="styles.css?v=20261002-1.2.0-web2">
-<link rel="stylesheet" href="city.css?v=20261002-1.2.0-web2">
-<link rel="stylesheet" href="compte.css?v=20261002-1.2.0-web2">
+<link rel="stylesheet" href="styles.css?v=20261002-1.3.0-web1">
+<link rel="stylesheet" href="city.css?v=20261002-1.3.0-web1">
+<link rel="stylesheet" href="compte.css?v=20261002-1.3.0-web1">
+<link rel="stylesheet" href="mobile.css?v=20261002-1.3.0-web1">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 </head>
 <body>
 <header class="topbar">
   <div class="brand"><span class="dot"></span><h1 id="appTitle">Tisséo <em>Live</em></h1><span class="city">Toulouse</span></div>
   <nav class="view-switch" aria-label="Mode de la carte">
-    <button id="viewTransport" aria-pressed="true" class="active">Transports</button>
-    <button id="viewCity" aria-pressed="false">Ville</button>
+    <button id="viewTransport" aria-pressed="true" class="active" data-ic="bus"><span id="viewTransportLabel">Transports</span></button>
+    <button id="viewCity" aria-pressed="false" data-ic="explore"><span>Ville</span></button>
   </nav>
   <div class="live" id="liveBadge"><span class="pulse"></span><span id="liveText">connexion…</span></div>
   <div class="stats" id="transportStats">
-    <button class="chip" id="statVehiclesBtn" title="Lister tous les véhicules en service"><b id="statVehicles">–</b><span>véhicules</span></button>
-    <button class="chip" id="statLinesBtn" title="Lister toutes les lignes et leurs véhicules"><b id="statLines">–</b><span>lignes</span></button>
-    <div class="chip"><b id="statAlerts">–</b><span>infos trafic</span></div>
+    <button class="chip" id="statVehiclesBtn" data-ic="bus" title="Lister tous les véhicules en service"><b id="statVehicles">–</b><span>véhicules</span></button>
+    <button class="chip" id="statLinesBtn" data-ic="route" title="Lister toutes les lignes et leurs véhicules"><b id="statLines">–</b><span>lignes</span></button>
+    <div class="chip" data-ic="alert" title="Infos trafic en cours"><b id="statAlerts">–</b><span>infos trafic</span></div>
   </div>
   <div id="cityHeader" class="city-header hidden"><span class="city-status-dot"></span><span id="cityHeaderText">Explorer Toulouse</span></div>
   <div class="actions">
-    <button id="btnGeo" title="Véhicules et arrêts autour de moi">📍</button>
-    <button id="btnFit" title="Zoomer sur les véhicules">⤢</button>
-    <button id="btnMap" title="Basculer fond de carte / tracés du réseau">🗺</button>
-    <button id="btnTiles" title="Basculer fond clair/sombre">🌓</button>
-    <button id="btnRefresh" title="Actualiser">↻ <span id="countdown">15</span><span id="countdownS">s</span></button>
+    <button id="btnGeo" data-ic="target" title="Véhicules et arrêts autour de moi" aria-label="Autour de moi"></button>
+    <button id="btnFit" data-ic="fit" title="Zoomer sur les véhicules" aria-label="Tout voir"></button>
+    <button id="btnMap" data-ic="layers" title="Basculer fond de carte / tracés du réseau" aria-label="Fond de carte ou tracés"></button>
+    <button id="btnTiles" data-ic="contrast" title="Basculer fond clair/sombre" aria-label="Fond clair ou sombre"></button>
+    <button id="btnRefresh" data-ic="refresh" title="Actualiser" aria-label="Actualiser"><span id="countdown">15</span><span id="countdownS">s</span></button>
   </div>
 </header>
 
 <div class="layout">
   <aside class="sidebar" id="sidebar">
-    <button class="sidebar-toggle" id="sidebarToggle">☰ Panneau</button>
+    <button class="sidebar-toggle" id="sidebarToggle" aria-expanded="false" aria-controls="sidebar"><span class="sheet-grip" aria-hidden="true"></span><span id="sidebarToggleLabel">Itinéraire, lignes, compte</span></button>
     <div class="sidebar-body" id="transportPanel">
       <details class="planner" id="planner">
-        <summary>🧭 Itinéraire</summary>
+        <summary data-ic="route">Itinéraire</summary>
         <div class="planner-form">
           <input id="jFrom" type="search" placeholder="De : Capitole, une adresse…" autocomplete="off">
           <input id="jTo" type="search" placeholder="À : Jean Jaurès, une adresse…" autocomplete="off">
           <div class="planner-actions">
             <button id="jGo" class="mini on">Calculer</button>
-            <button id="jSwap" class="mini" title="Inverser départ et arrivée">⇅</button>
-            <button id="jClose" class="mini" title="Fermer">✕</button>
+            <button id="jSwap" class="mini" data-ic="swap" title="Inverser départ et arrivée" aria-label="Inverser départ et arrivée"></button>
+            <button id="jClose" class="mini" data-ic="close" title="Fermer" aria-label="Fermer l’itinéraire"></button>
           </div>
         </div>
         <div id="jResults" class="jresults"></div>
       </details>
       <details class="planner account" id="compte">
-        <summary>👤 Compte <span id="compteEtat" class="cpt-etat"></span></summary>
+        <summary data-ic="account">Compte <span id="compteEtat" class="cpt-etat"></span></summary>
         <div id="compteCorps" class="cpt-corps"></div>
       </details>
       <input id="search" type="search" placeholder="Rechercher une ligne ou un arrêt…" autocomplete="off">
@@ -100,27 +101,28 @@ __cssChain([
         <button data-mode="teleo">Téléo</button>
       </div>
       <div class="rowhead">
-        <h2>🚏 Arrêts favoris <span id="favStopsCount"></span></h2>
+        <h2 data-ic="stop">Arrêts favoris <span id="favStopsCount"></span></h2>
       </div>
       <ul id="favStopList" class="lines favs"></ul>
       <div class="rowhead">
-        <h2>Lignes en circulation <span id="linesCount"></span></h2>
-        <button id="btnCopyLink" class="mini hidden" title="Copier le lien vers cette vue">🔗</button>
+        <h2 data-ic="bus">Lignes en circulation <span id="linesCount"></span></h2>
+        <button id="btnCopyLink" class="mini hidden" data-ic="link" title="Copier le lien vers cette vue" aria-label="Copier le lien vers cette vue"></button>
         <button id="btnAllLines" class="mini" title="Lister toutes les lignes du réseau, avec leurs véhicules et leurs positions">Toutes les lignes</button>
       </div>
       <ul id="favList" class="lines favs"></ul>
       <ul id="lineList" class="lines"></ul>
-      <h2>Infos trafic <span id="alertsCount"></span></h2>
+      <h2 data-ic="alert">Infos trafic <span id="alertsCount"></span></h2>
       <ul id="alertList" class="alerts"></ul>
-      <p class="method">
-        <b>Comment ça marche ?</b> Tisséo ne publie pas les positions GPS de ses véhicules en open data.
+      <details class="method">
+        <summary data-ic="info">Comment ça marche ?</summary>
+        <p>Tisséo ne publie pas les positions GPS de ses véhicules en open data.
         Cette carte <b>estime</b> chaque position : elle interpole le long du <b>tracé réel</b> de la ligne
         entre les deux arrêts qui encadrent l'instant, à partir des horaires temps réel.
         Le métro A/B et le Téléo ne sont pas couverts par le flux temps réel aux heures creuses :
         leurs rames sont alors calculées à partir des <b>horaires du GTFS statique</b>, et marquées
         <b>théoriques</b> (contours pointillés).
-        Données : Tisséo / Toulouse Métropole (ODbL).
-      </p>
+        Données : Tisséo / Toulouse Métropole (ODbL).</p>
+      </details>
     </div>
     <div id="cityPanel" class="sidebar-body city-panel hidden">
       <div class="city-intro">
@@ -163,7 +165,7 @@ __cssChain([
     <section id="inventory" class="inventory hidden"></section>
     <section id="detail" class="detail hidden"></section>
     <section id="cityDetail" class="detail city-detail hidden" aria-label="Fiche du lieu"></section>
-    <div id="cityMapNote" class="city-map-note hidden"><span class="city-note-icon" aria-hidden="true">✦</span><div><b>Toulouse, côté ville</b><span id="cityMapSummary">Choisis ce que tu veux explorer.</span></div><button id="cityFit" title="Recentrer sur les lieux sélectionnés" aria-label="Recentrer sur les lieux sélectionnés">⤢</button></div>
+    <div id="cityMapNote" class="city-map-note hidden"><span class="city-note-icon" aria-hidden="true">✦</span><div><b>Toulouse, côté ville</b><span id="cityMapSummary">Choisis ce que tu veux explorer.</span></div><button id="cityFit" data-ic="fit" title="Recentrer sur les lieux sélectionnés" aria-label="Recentrer sur les lieux sélectionnés"></button></div>
   </main>
 </div>
 
@@ -192,9 +194,11 @@ __cssChain([
   window.IT = IT;
   window.dispatchEvent(new Event('tisseo:lib'));
 </script>
-<script src="app.js?v=20261002-1.2.0-web2"></script>
-<script src="city.js?v=20261002-1.2.0-web2"></script>
-<script src="compte.js?v=20261002-1.2.0-web2"></script>
-<script type="module" src="walking.js?v=20261002-1.2.0-web2"></script>
+<script src="art.js?v=20261002-1.3.0-web1"></script>
+<script src="app.js?v=20261002-1.3.0-web1"></script>
+<script src="city.js?v=20261002-1.3.0-web1"></script>
+<script src="compte.js?v=20261002-1.3.0-web1"></script>
+<script src="mobile.js?v=20261002-1.3.0-web1"></script>
+<script type="module" src="walking.js?v=20261002-1.3.0-web1"></script>
 </body>
 </html>
