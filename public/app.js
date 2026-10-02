@@ -1860,7 +1860,7 @@ function connectStream() {
 
 // PWA : mise en cache du shell applicatif
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-  navigator.serviceWorker.register('sw.js?v=20261002-1.4.0', { updateViaCache: 'none' }).catch(() => {});
+  navigator.serviceWorker.register('sw.js?v=20261002-1.5.0', { updateViaCache: 'none' }).catch(() => {});
 }
 
 // deep link ?ligne=L1 (nom court ou route_id)

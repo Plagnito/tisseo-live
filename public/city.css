@@ -60,6 +60,40 @@
 .city-transport-option { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); padding-top: 2px; }
 .city-transport-option input, .city-results-head input { accent-color: #e9aa89; }
 .city-live-label { margin-left: auto; font-size: 8px; letter-spacing: .8px; color: #79d8a3; }
+/* --- transports en direct des autres villes (reseau.js) --- */
+.reseau-box { display: flex; flex-direction: column; gap: 4px; }
+.reseau-box select { font-size: 11px; }
+.reseau-etat { margin: 0; font-size: 10.5px; line-height: 1.35; color: var(--muted); }
+.reseau-etat a { color: inherit; }
+.rv-marker { transition: transform 1.2s linear; }
+.leaflet-zoom-anim .rv-marker { transition: none; }
+.rv {
+  position: relative; height: 24px; min-width: 24px; padding: 0 5px; box-sizing: border-box; border-radius: 12px;
+  display: grid; place-items: center; background: var(--c); color: var(--t);
+  border: 2px solid #fff; box-shadow: 0 1px 5px rgba(0,0,0,.45); font: 800 11px/1 system-ui, sans-serif; cursor: pointer;
+}
+.rv b { position: relative; white-space: nowrap; }
+/* Position estimée : contour en tirets, comme les rames théoriques de Toulouse. */
+.rv.est { border-style: dashed; }
+.rv.on { outline: 3px solid rgba(255,255,255,.9); box-shadow: 0 0 0 5px rgba(0,0,0,.35); }
+.rv-dir {
+  position: absolute; left: 50%; top: 50%; width: 0; height: 0; margin: -5px 0 0 -5px;
+  border: 5px solid transparent; border-bottom-color: var(--c); filter: drop-shadow(0 0 1px #fff);
+}
+.rv-stop { cursor: pointer; }
+.rv-popup .leaflet-popup-content { margin: 12px 14px; }
+.rv-card { font: 13px/1.35 system-ui, sans-serif; color: #1c2430; min-width: 200px; }
+.rv-head { display: flex; align-items: center; gap: 9px; }
+.rv-head strong { display: block; font-size: 14px; }
+.rv-head small { color: #66707f; font-size: 11px; }
+.rv-line { display: inline-grid; place-items: center; min-width: 26px; height: 22px; padding: 0 6px; border-radius: 6px; font: 800 12px/1 system-ui, sans-serif; flex: none; }
+.rv-state { margin: 7px 0 0; font-size: 12px; color: #3b4656; }
+.rv-stops, .rv-deps { list-style: none; margin: 8px 0 0; padding: 0; }
+.rv-stops li, .rv-deps li { display: flex; align-items: center; gap: 8px; padding: 3px 0; border-top: 1px solid #e8ebf0; font-size: 12px; }
+.rv-stops li span, .rv-deps li span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rv-stops time, .rv-deps time { font-variant-numeric: tabular-nums; color: #3b4656; white-space: nowrap; }
+.rv-more { margin: 7px 0 0; font-size: 11.5px; color: #66707f; }
+.rv-src { margin: 8px 0 0; font-size: 10.5px; color: #7a8493; }
 .city-event-filters { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); }
 .city-event-filters select { min-width: 0; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; color: var(--text); padding: 6px; font: inherit; }
 .city-results-head { padding-top: 16px; border-top: 1px solid var(--line); }

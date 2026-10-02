@@ -1,16 +1,17 @@
 {
-  "version": "20261002-1.4.0",
+  "version": "20261002-1.5.0",
   "empreintes": {
-    "app.js": "7af62be7d8adff72",
+    "app.js": "90171b2d0c8a9360",
     "art.js": "e98d867c5f8b87b2",
-    "city.css": "a1123695fb2781dd",
-    "city.js": "010a80f80151b676",
+    "city.css": "3f3cdda062ca5d8c",
+    "city.js": "a5483bdf5cfc9d09",
     "compte.css": "e0b9e744315a9749",
     "compte.js": "bcb069cf56a17326",
     "mobile.css": "ac2889b27a0568a2",
     "mobile.js": "3e7dff4591d2243e",
+    "reseau.js": "2283913fd94fbeaf",
     "styles.css": "21d586d5d3a98251",
-    "sw.js": "3e83730457ec3f09",
+    "sw.js": "5f625b834684675a",
     "walking.js": "a7322e6386a71c2f"
   }
 }

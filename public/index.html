@@ -41,10 +41,10 @@ __cssChain([
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css'
 ]);
 </script>
-<link rel="stylesheet" href="styles.css?v=20261002-1.4.0">
-<link rel="stylesheet" href="city.css?v=20261002-1.4.0">
-<link rel="stylesheet" href="compte.css?v=20261002-1.4.0">
-<link rel="stylesheet" href="mobile.css?v=20261002-1.4.0">
+<link rel="stylesheet" href="styles.css?v=20261002-1.5.0">
+<link rel="stylesheet" href="city.css?v=20261002-1.5.0">
+<link rel="stylesheet" href="compte.css?v=20261002-1.5.0">
+<link rel="stylesheet" href="mobile.css?v=20261002-1.5.0">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 </head>
 <body>
@@ -146,6 +146,11 @@ __cssChain([
       <div class="city-section-head"><h3>Sur ma carte</h3><button id="cityClear" class="city-text-button">Tout masquer</button></div>
       <div id="cityCategories" class="city-categories"></div>
       <label class="city-transport-option"><input id="cityTransport" type="checkbox"><span>Ajouter les véhicules Tisséo</span><span class="city-live-label">LIVE</span></label>
+      <div id="reseauBox" class="reseau-box hidden">
+        <label class="city-transport-option"><input id="reseauLive" type="checkbox" checked><span id="reseauLabel">Transports en direct</span><span class="city-live-label">LIVE</span></label>
+        <select id="reseauChoix" class="hidden" aria-label="Réseau de transport affiché"></select>
+        <p id="reseauEtat" class="reseau-etat" role="status" aria-live="polite"></p>
+      </div>
       <div id="cityEventFilters" class="city-event-filters hidden">
         <label for="cityPeriod">Agenda</label><select id="cityPeriod"><option value="upcoming">En cours & à venir</option><option value="today">Aujourd’hui</option><option value="tonight">Ce soir</option><option value="week">Les 7 prochains jours</option></select>
         <select id="cityEventTag" aria-label="Type de sortie"><option value="">Toutes les sorties</option><option value="free">Gratuites</option><option value="family">En famille</option><option value="concert">Concerts</option><option value="exhibition">Expositions</option></select>
@@ -195,11 +200,12 @@ __cssChain([
   window.IT = IT;
   window.dispatchEvent(new Event('tisseo:lib'));
 </script>
-<script src="art.js?v=20261002-1.4.0"></script>
-<script src="app.js?v=20261002-1.4.0"></script>
-<script src="city.js?v=20261002-1.4.0"></script>
-<script src="compte.js?v=20261002-1.4.0"></script>
-<script src="mobile.js?v=20261002-1.4.0"></script>
-<script type="module" src="walking.js?v=20261002-1.4.0"></script>
+<script src="art.js?v=20261002-1.5.0"></script>
+<script src="app.js?v=20261002-1.5.0"></script>
+<script src="reseau.js?v=20261002-1.5.0"></script>
+<script src="city.js?v=20261002-1.5.0"></script>
+<script src="compte.js?v=20261002-1.5.0"></script>
+<script src="mobile.js?v=20261002-1.5.0"></script>
+<script type="module" src="walking.js?v=20261002-1.5.0"></script>
 </body>
 </html>

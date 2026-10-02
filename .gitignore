@@ -3,6 +3,8 @@ npm-debug.log
 server.out.log
 server.err.log
 data-live/
+# Réseaux des autres villes : catalogue et GTFS préparés, régénérés à la demande.
+data-net/
 .env
 updater/state.json
 updater/supervisor.log*

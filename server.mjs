@@ -44,6 +44,7 @@ import { createOAuth } from './lib/oauth.mjs';
 import { monterCompte } from './lib/compte-routes.mjs';
 import { createAccountTools, INSTRUCTIONS_COMPTE } from './lib/tools-compte.mjs';
 import { createCityTools, INSTRUCTIONS_VILLE } from './lib/tools-ville.mjs';
+import { createNetworkService, mountNetworks } from './lib/reseaux/routes.mjs';
 
 // Les horaires théoriques (lib/schedules.mjs) raisonnent en heure LOCALE :
 // sur un serveur réglé en UTC (Raspberry Pi, conteneur), tout serait décalé
@@ -325,6 +326,11 @@ const { createCityContext, worldPoint, cityTourPoints } = await import('./lib/ci
 const cityContext = createCityContext();
 const cities = createCityDirectory();
 const cityProfile = (req) => cities.get(String(req.query.city || 'fr:31555'));
+// Transports en direct des AUTRES villes (catalogue national) : /api/net/…
+// data-net/ se régénère seul ; TISSEO_DATA_NET le déplace (tests).
+const reseaux = createNetworkService({ dir: join(__dirname, process.env.TISSEO_DATA_NET || 'data-net'), script: join(__dirname, 'scripts', 'prepare-reseau.mjs') });
+mountNetworks(app, { networks: reseaux, ah });
+
 app.get('/api/cities/search', ah(async (req, res) => {
   try { res.json({ cities: await cities.search(String(req.query.q || '')) }); }
   catch { res.status(502).json({ error: 'Recherche de ville indisponible' }); }
@@ -1140,7 +1146,7 @@ const mcp = createMcpServer({
   instructionsCompte: INSTRUCTIONS_COMPTE,
   tools: [
     ...outilsTransport,
-    ...createCityTools({ cities, cityService, cityContext, profileCatalog, resoudreLieu: outilsTransport.resoudreLieu }),
+    ...createCityTools({ cities, cityService, cityContext, profileCatalog, resoudreLieu: outilsTransport.resoudreLieu, reseaux }),
     ...createAccountTools({ accounts, compte, publicUrl: PUBLIC_URL }),
   ],
 });

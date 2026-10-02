@@ -86,7 +86,7 @@
   function applyProfile(p){
     if(!p?.id)return;profile=p;epoch++;tourTicket++;isoRequest++;loadingCatalog=false;todayLoading=false;catalogError=false;data.clear();dataRev++;loading.clear();queue.length=0;catalog=[];categories.clear();selectedPlace=null;favoritesOnly=false;weather=null;alerts=null;myLocation=null;iso=null;isoOrigin=null;tourPoints=[];
     for(const l of [layer,focusLayer,walkLayer,zoneLayer])l.clearLayers();markersById.clear();markersKey=null;$('cityDetail').classList.add('hidden');$('cityTourResult').textContent='';$('cityTransport').checked=false;renderTour();
-    try{localStorage.setItem('tisseo.city.profile',JSON.stringify(p));}catch{}const url=new URL(location.href);url.searchParams.set('city',p.id);history.replaceState(null,'',url);map.setView([p.lat,p.lon],14);cityLabels();loadCatalog();loadToday();syncTransport();
+    try{localStorage.setItem('tisseo.city.profile',JSON.stringify(p));}catch{}const url=new URL(location.href);url.searchParams.set('city',p.id);history.replaceState(null,'',url);map.setView([p.lat,p.lon],14);cityLabels();loadCatalog();loadToday();syncTransport();window.Reseau?.sync(profile,active);
   }
 
   let active = false, catalog = [], categories = new Map(), selected = new Set(), preset = 'all', initialized = false, myLocation = null;
@@ -197,7 +197,7 @@
       $('cityDetail').classList.add('hidden');
       renderAll();
     }
-    cityLabels();syncTransport();
+    cityLabels();syncTransport();window.Reseau?.sync(profile,active);
     if (persist) {
       const url = new URL(location.href);
       if (active) url.searchParams.set('vue', 'ville'); else url.searchParams.delete('vue');
@@ -216,7 +216,7 @@
       if (!r.ok) throw new Error('Catalogue indisponible');
       const j = await r.json();
       if(generation!==epoch)return;if (!Array.isArray(j.categories)) throw new Error('Catalogue incorrect');
-      if(j.profile){const old=profile.name,pending=profile.pending;profile=j.profile;cityLabels();if(pending||old!==profile.name)map.setView([profile.lat,profile.lon],14,{animate:false});try{localStorage.setItem('tisseo.city.profile',JSON.stringify(profile));}catch{}}
+      if(j.profile){const old=profile.name,pending=profile.pending;profile=j.profile;cityLabels();if(pending||old!==profile.name)map.setView([profile.lat,profile.lon],14,{animate:false});try{localStorage.setItem('tisseo.city.profile',JSON.stringify(profile));}catch{}window.Reseau?.sync(profile,active);}
       catalog = j.categories;$('cityCoverage').textContent=j.notice||'Données publiques · couverture partielle, informations à vérifier auprès des lieux.';
       categories = new Map(catalog.map((c) => [c.id, c])); pinCache.clear();
       const wanted = restoreSelection && selectionAtStart === selectionRevision
@@ -510,7 +510,7 @@
     } catch (e) { toast(e.message || 'Parcours indisponible.'); }
   }
   $('viewCity').onclick = () => setActive(true);
-  $('viewTransport').onclick = () => {if(profile.transport==='tisseo'){setActive(false);return;}setActive(true);selected=new Set(['stops']);selectionRevision++;favoritesOnly=false;resetPractical();loadSelected();rebuildMarkers();renderCategories();render();toast('Arrêts référencés · passages en direct non fournis.');};
+  $('viewTransport').onclick = () => {if(profile.transport==='tisseo'){setActive(false);return;}setActive(true);selected=new Set(['stops']);selectionRevision++;favoritesOnly=false;resetPractical();loadSelected();rebuildMarkers();renderCategories();render();toast(window.Reseau?.state().network?'Arrêts référencés · véhicules et passages en direct : '+window.Reseau.state().network.name+'.':'Arrêts référencés · passages en direct non fournis.');};
   $('cityDate').textContent = new Date().toLocaleDateString('fr-FR', { timeZone: cityZone(), weekday: 'long', day: 'numeric', month: 'long' });
   $('cityCategories').onclick = (e) => {
     const b = e.target.closest('[data-category]'); if (!b) return;

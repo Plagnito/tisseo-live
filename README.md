@@ -243,6 +243,54 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
    naturellement, puisqu'elle est plus courte que n'importe quel détour.
 
 
+## Transports en direct des autres villes
+
+Dans le mode Ville, une ville française dont le réseau publie du temps réel montre ses
+véhicules sur la carte : Bordeaux, Rennes, Montpellier, Nice, Rouen, Toulon, Dijon, Brest,
+Angers, Tours, Le Havre, Metz, Le Mans, Lille, Saint-Étienne, Clermont-Ferrand, Orléans,
+Nancy… Aucune liste n'est écrite dans le code : elle vient du **point d'accès national**
+([transport.data.gouv.fr](https://transport.data.gouv.fr)), relu deux fois par jour.
+
+- **Quelle ville, quel réseau.** Chaque fiche du catalogue dit quelles communes et
+  intercommunalités elle couvre ; la ville choisie y est cherchée par son code INSEE et
+  celui de son intercommunalité. Le réseau urbain passe avant une navette, celui qui publie
+  des positions avant celui qui ne publie que des horaires (`lib/reseaux/catalogue.mjs`).
+- **Deux natures de position, dites telles quelles.** « GPS » : le réseau publie la position
+  de ses véhicules (`VehiclePositions`). « Estimée » : il ne publie que ses horaires temps
+  réel (`TripUpdates`) ; le véhicule est alors placé entre l'arrêt qu'il vient de quitter et
+  le suivant, le long du tracé quand le GTFS en a un — comme la carte de Toulouse. Sur la
+  carte, une position estimée a un contour en tirets ; la fiche le dit en toutes lettres.
+- **Le GTFS statique sans `stop_times.txt`.** Lignes, couleurs, destinations, arrêts et un
+  tracé par sens suffisent ; les passages viennent du temps réel. Le fichier des horaires,
+  qui pèse des centaines de mégaoctets sur une métropole, n'est jamais lu. La préparation
+  tourne dans un processus à part (`scripts/prepare-reseau.mjs`, deux à trois secondes), une
+  à la fois ; le résultat (`data-net/<réseau>/net.json`, hors dépôt) est refait chaque
+  semaine. En attendant, les véhicules s'affichent déjà, avec l'identifiant brut de leur ligne.
+- **Flux lus à la demande.** Rien n'est interrogé tant que personne ne regarde la ville ; un
+  flux n'est pas relu plus d'une fois toutes les vingt secondes, et un relais qui répond
+  « trop de requêtes » est laissé tranquille une minute. Le décodeur protobuf est écrit à la
+  main (`lib/reseaux/gtfsrt.mjs`, sans dépendance) ; les quelques réseaux qui servent du
+  JSON sont lus aussi.
+- **Le navigateur ne fournit jamais d'adresse**, seulement l'identifiant d'un réseau du
+  catalogue. Les adresses du catalogue sont elles-mêmes contrôlées avant lecture, redirections
+  comprises : ni la machine, ni le réseau local (`publicUrl`).
+- **Ce qui manque, et qui est dit.** Paris, Lyon, Strasbourg et Marseille ne publient ni
+  positions ni horaires temps réel au point d'accès national : ces villes gardent leurs lieux,
+  sans véhicules. Hors de Toulouse il n'y a ni itinéraire ni horaires théoriques. Un flux en
+  panne (Grenoble sert une page web à la place du sien, Nantes refuse souvent les lectures)
+  donne « ne répond pas pour l'instant », jamais une carte vide présentée comme calme.
+
+| Route | Description |
+|---|---|
+| `GET /api/net/for?city=fr:33063` | Réseaux de la ville qui publient du temps réel, le meilleur d'abord |
+| `GET /api/net/:id/vehicles` | Véhicules en circulation (`nature` : `gps` ou `estime`) |
+| `GET /api/net/:id/vehicle?vid=…` | Arrêts à venir d'un véhicule et tracés de sa ligne |
+| `GET /api/net/:id/stops?bbox=sud,ouest,nord,est` | Arrêts dans une emprise |
+| `GET /api/net/:id/stop?stop_id=…` | Prochains passages à un arrêt (tous ses quais) |
+
+Contrôles : `node --test test/reseaux.test.mjs` et `npm run test:e2e:reseaux` (réseau fabriqué,
+aucun flux réel).
+
 ## Compte Atlas : trajets enregistrés, planifiés, partagés
 
 Le compte est **facultatif** : sans lui, la carte, les itinéraires et le connecteur
@@ -301,6 +349,7 @@ Deux adresses, le même serveur **MCP** (transport « Streamable HTTP », sans �
 | `etat_du_reseau` | Vue d'ensemble, fraîcheur des données, validité des horaires |
 | `ville_rechercher`, `ville_categories`, `ville_lieux` | Mode Ville : trouver une ville, ses catégories, ses lieux |
 | `ville_meteo`, `ville_a_pied`, `ville_a_distance_de_marche`, `ville_balade` | Météo, trajet piéton, ce qui est à N minutes à pied, balade à étapes |
+| `ville_transports` | Transports EN DIRECT d'une autre ville française : véhicules par ligne, véhicules d'une ligne, passages à un arrêt — positions publiées ou estimées, c'est dit |
 
 Avec un compte (`/mcp/compte`) :
 
@@ -496,6 +545,7 @@ npm run prepare-gtfs
 
 - GTFS-RT : https://api.tisseo.fr/opendata/gtfsrt/
 - GTFS statique : https://data.toulouse-metropole.fr/explore/dataset/tisseo-gtfs/
+- Autres réseaux : point d'accès national https://transport.data.gouv.fr (GTFS et GTFS-RT de chaque réseau, sous sa propre licence — Licence Ouverte ou ODbL ; la source est citée sous la case du réseau)
 - Licence : ODbL (Tisséo / Toulouse Métropole)
 - Fond de carte : © OpenStreetMap contributors · © Esri · CyclOSM · OpenTopoMap
 
