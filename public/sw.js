@@ -1,9 +1,9 @@
 // Service worker Tisséo Live — cache du shell applicatif uniquement.
 // Les données temps réel (/api/*) ne sont JAMAIS mises en cache ici.
-const CACHE = 'tisseo-live-v12';
+const CACHE = 'tisseo-live-v13';
 const GEO = 'tisseo-geo-v1'; // géométrie du réseau : survit à une coupure
 const SHELL = [
-  './', './index.html', './styles.css?v=20261001-1.1.0-web2', './app.js?v=20261001-1.1.0-web2', './city.css?v=20261001-1.1.0-web2', './city.js?v=20261001-1.1.0-web2', './walking.js?v=20261001-1.1.0-web2', './compte.css?v=20261002-1.2.0-web1', './compte.js?v=20261002-1.2.0-web1', './manifest.json', './icon.svg', './lib/city-explore.mjs', './lib/walk-rules.mjs',
+  './', './index.html', './styles.css?v=20261002-1.2.0-web2', './app.js?v=20261002-1.2.0-web2', './city.css?v=20261002-1.2.0-web2', './city.js?v=20261002-1.2.0-web2', './walking.js?v=20261002-1.2.0-web2', './compte.css?v=20261002-1.2.0-web2', './compte.js?v=20261002-1.2.0-web2', './manifest.json', './icon.svg', './lib/city-explore.mjs', './lib/walk-rules.mjs',
   './vendor/leaflet.js', './vendor/leaflet.css', './vendor/leaflet.markercluster.js',
   './vendor/MarkerCluster.css', './vendor/MarkerCluster.Default.css',
   './vendor/images/marker-icon.png', './vendor/images/marker-icon-2x.png',
@@ -76,6 +76,10 @@ self.addEventListener('fetch', (e) => {
           await cache.put(e.request, response.clone());
           return response;
         }
+        // Une redirection n'est pas une panne : on la laisse passer telle
+        // quelle. La remplacer par la page d'accueil en cache, c'est afficher
+        // la carte (sans styles) à l'adresse d'une page qui renvoyait ailleurs.
+        if (response.type === 'opaqueredirect' || (response.status >= 300 && response.status < 400)) return response;
         return await cache.match(e.request) || await cache.match('./index.html') || response;
       } catch {
         return await cache.match(e.request) || await cache.match('./index.html')

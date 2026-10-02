@@ -83,7 +83,7 @@ final class AccountController {
         LinearLayout box = host.column();
         if (notice != null) box.addView(host.text(notice, 14, MainActivity.ACCENT, true));
         box.addView(host.text("Avec un compte Atlas, tes trajets te suivent d’un appareil à l’autre : enregistre ceux que tu fais souvent, planifie-les avec un rappel, partage-les avec tes amis.", 14, MainActivity.INK, false));
-        box.addView(host.button("Se connecter avec Atlas", () -> host.openUrl(host.apiBase() + "/auth/connexion?app=android")));
+        box.addView(host.button("Se connecter avec Atlas", () -> host.openUrl(host.apiBase() + "/api/auth/connexion?app=android")));
         box.addView(host.text("La connexion s’ouvre dans ton navigateur : l’application ne voit jamais ton mot de passe. Sans compte, la carte, les itinéraires et « Mes déplacements » restent entièrement utilisables.", 12, MainActivity.MUTED, false));
         host.showSheet("Mon compte", box);
     }

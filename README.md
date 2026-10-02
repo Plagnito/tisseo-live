@@ -134,9 +134,9 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
 | `GET /api/nearby?lat=…&lon=…&n=…` | Arrêts les plus proches + leurs passages |
 | `GET /api/journey?from=…&to=…` | Itinéraire A→B (nom d'arrêt, id ou `lat,lon`) |
 | `GET /api/status` | Santé : âge du flux, compteurs, véhicules recalés, erreurs amont |
-| `GET /auth/connexion` | Connexion par le compte Atlas (SSO, PKCE) ; `?app=android` revient dans l'application |
+| `GET /api/auth/connexion` | Connexion par le compte Atlas (SSO, PKCE) ; `?app=android` revient dans l'application. Sous `/api/` comme le retour et l'accord des assistants : aucun service worker, même ancien, n'intercepte ce préfixe |
 | `/api/compte/…` | Trajets enregistrés, trajets planifiés, amis, partages, assistants autorisés — voir « Compte Atlas » |
-| `/oauth/…`, `/.well-known/oauth-…` | Serveur d'autorisation des assistants (connecteur MCP avec compte) |
+| `/api/oauth/…`, `/oauth/…`, `/.well-known/oauth-…` | Serveur d'autorisation des assistants (connecteur MCP avec compte) |
 
 ## Ce que fait la carte
 

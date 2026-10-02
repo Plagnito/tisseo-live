@@ -17,6 +17,7 @@
     "test:e2e:telephone": "node test/telephone.mjs",
     "test:e2e:navigateurs": "node test/navigateurs.mjs",
     "test:e2e:compte": "node test/e2e-compte.mjs",
+    "test:e2e:compte-sw": "node test/e2e-compte-sw.mjs",
     "verifier:traces": "node --test test/traces.test.mjs",
     "verifier:itineraires": "node --test test/itineraires.test.mjs",
     "verifier:performance": "node test/performance.mjs",

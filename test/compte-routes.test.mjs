@@ -82,7 +82,7 @@ function brut(chemin, hote) {
 const cookieDe =(res) => (res.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
 
 /** Fait le tour complet par le faux Atlas. Rend la dernière réponse et le cookie. */
-async function connexion(compteId, chemin = '/auth/connexion', { navigateur = '', revenir = true } = {}) {
+async function connexion(compteId, chemin = '/api/auth/connexion', { navigateur = '', revenir = true } = {}) {
   const r1 = await fetch(B.base + chemin, { redirect: 'manual', headers: navigateur ? { Cookie: navigateur } : {} });
   assert.equal(r1.status, 302, 'la connexion renvoie vers Atlas');
   // Le témoin posé au départ : c'est ce qui fait de nous « le même navigateur » au retour.
@@ -129,12 +129,13 @@ async function autoriserAssistant(cookie, { amis = false } = {}) {
   assert.equal(reg.statut, 201);
   const { verifier, challenge } = pkce();
   const q = new URLSearchParams({ client_id: reg.json.client_id, redirect_uri: CHATGPT, response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256', scope: 'tisseo amis', state: 'etat-chatgpt' });
-  const r1 = await fetch(`${B.base}/oauth/authorize?${q}`, { redirect: 'manual' });
+  const annonce = (await (await fetch(`${B.base}/.well-known/oauth-authorization-server`)).json()).authorization_endpoint;
+  const r1 = await fetch(`${annonce}?${q}`, { redirect: 'manual' });
   assert.equal(r1.status, 302);
   const accord = r1.headers.get('location');
-  assert.match(accord, /^\/oauth\/accord\?demande=[0-9a-f]+$/);
+  assert.match(accord, /^\/api\/oauth\/accord\?demande=[0-9a-f]+$/);
   const demande = accord.split('=')[1];
-  const r2 = await fetch(`${B.base}/oauth/accord`, {
+  const r2 = await fetch(`${B.base}/api/oauth/accord`, {
     method: 'POST', redirect: 'manual', headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ demande, choix: 'oui', ...(amis ? { amis: '1' } : {}) }),
   });
@@ -155,7 +156,7 @@ async function autoriserAssistant(cookie, { amis = false } = {}) {
 test('sans session : la page le sait sans erreur, les écritures sont refusées', async () => {
   const r = await api(null, 'GET', '/api/compte');
   assert.equal(r.statut, 200, 'un visiteur anonyme ne doit pas provoquer de 401 à chaque ouverture');
-  assert.deepEqual(r.json, { connecte: false, connexion: '/auth/connexion' });
+  assert.deepEqual(r.json, { connecte: false, connexion: '/api/auth/connexion' });
   for (const [m, c] of [['POST', '/api/compte/trajets'], ['GET', '/api/compte/trajets'], ['GET', '/api/compte/amis'], ['DELETE', '/api/compte'], ['GET', '/api/compte/assistants']]) {
     const x = await api(null, m, c, m === 'POST' ? { de: 'A', a: 'B' } : undefined);
     assert.equal(x.statut, 401, `${m} ${c}`);
@@ -164,11 +165,11 @@ test('sans session : la page le sait sans erreur, les écritures sont refusées'
 });
 
 test('connexion par Atlas : PKCE, cookie fermé au script, retour sur la page', async () => {
-  const { res, versAtlas } = await connexion(1, '/auth/connexion?retour=/%3Fcompte%3D1');
+  const { res, versAtlas } = await connexion(1, '/api/auth/connexion?retour=/%3Fcompte%3D1');
   assert.equal(versAtlas.searchParams.get('client_id'), 'tisseo-live');
   assert.equal(versAtlas.searchParams.get('code_challenge_method'), 'S256');
   assert.match(versAtlas.searchParams.get('code_challenge'), /^[A-Za-z0-9_-]{43}$/);
-  assert.equal(versAtlas.searchParams.get('redirect_uri'), `${B.base}/auth/retour`);
+  assert.equal(versAtlas.searchParams.get('redirect_uri'), `${B.base}/api/auth/retour`);
   assert.equal(res.headers.get('location'), '/?compte=1');
   const pose = res.headers.getSetCookie()[0];
   assert.match(pose, /HttpOnly/);
@@ -185,10 +186,10 @@ test('le retour de connexion ne sert qu’une fois, et ne redirige jamais ailleu
   const rejoue = await fetch(c.retour, { redirect: 'manual' });
   assert.equal(rejoue.status, 400, 'le même retour, rejoué, est refusé');
   assert.equal(cookieDe(rejoue), '');
-  const invente = await fetch(`${B.base}/auth/retour?code=abc&state=inconnu`, { redirect: 'manual' });
+  const invente = await fetch(`${B.base}/api/auth/retour?code=abc&state=inconnu`, { redirect: 'manual' });
   assert.equal(invente.status, 400);
   for (const mauvais of ['//pirate.example/x', 'https://pirate.example', '/\\pirate.example']) {
-    const { res } = await connexion(1, `/auth/connexion?retour=${encodeURIComponent(mauvais)}`);
+    const { res } = await connexion(1, `/api/auth/connexion?retour=${encodeURIComponent(mauvais)}`);
     assert.equal(res.headers.get('location'), '/', mauvais);
   }
 });
@@ -196,22 +197,22 @@ test('le retour de connexion ne sert qu’une fois, et ne redirige jamais ailleu
 test('une connexion se termine dans le navigateur qui l’a commencée', async () => {
   // Quelqu'un commence une connexion avec SON compte et fait ouvrir l'adresse
   // de retour à une autre personne : elle ne doit pas se retrouver dans ce compte.
-  const piege = await connexion(2, '/auth/connexion', { revenir: false });
-  assert.match(piege.depart.headers.getSetCookie()[0], /^tisseo_demande=[0-9a-f]{36}; Path=\/auth; HttpOnly; SameSite=Lax; Max-Age=600$/);
+  const piege = await connexion(2, '/api/auth/connexion', { revenir: false });
+  assert.match(piege.depart.headers.getSetCookie()[0], /^tisseo_demande=[0-9a-f]{36}; Path=\/; HttpOnly; SameSite=Lax; Max-Age=600$/);
   const victime = await fetch(piege.retour, { redirect: 'manual' });
   assert.equal(victime.status, 400, 'sans le témoin du navigateur de départ : refusé');
   assert.equal(cookieDe(victime), '', 'et aucune session n’est ouverte');
   assert.match(await victime.text(), /pas été commencée dans ce navigateur/);
 
-  const autre = await connexion(2, '/auth/connexion', { revenir: false });
+  const autre = await connexion(2, '/api/auth/connexion', { revenir: false });
   const ailleurs = await fetch(autre.retour, { redirect: 'manual', headers: { Cookie: 'tisseo_demande=' + 'ab'.repeat(18) } });
   assert.equal(ailleurs.status, 400, 'avec le témoin d’un AUTRE navigateur : refusé');
   const tard = await fetch(autre.retour, { redirect: 'manual', headers: { Cookie: autre.temoin } });
   assert.equal(tard.status, 400, 'une tentative refusée est consommée : elle ne se rejoue pas, même avec le bon témoin');
 
   // Deux onglets du même navigateur ne se gênent pas : le témoin est réutilisé.
-  const un = await connexion(1, '/auth/connexion', { revenir: false });
-  const deux = await connexion(1, '/auth/connexion', { revenir: false, navigateur: un.temoin });
+  const un = await connexion(1, '/api/auth/connexion', { revenir: false });
+  const deux = await connexion(1, '/api/auth/connexion', { revenir: false, navigateur: un.temoin });
   assert.equal(deux.temoin, un.temoin, 'le second onglet garde le même témoin');
   for (const onglet of [un, deux]) {
     const r = await fetch(onglet.retour, { redirect: 'manual', headers: { Cookie: un.temoin } });
@@ -219,8 +220,58 @@ test('une connexion se termine dans le navigateur qui l’a commencée', async (
     assert.match(cookieDe(r), /^tisseo_session=/);
   }
   // Un témoin fantaisiste envoyé au départ n'est pas adopté tel quel.
-  const forge = await connexion(1, '/auth/connexion', { revenir: false, navigateur: 'tisseo_demande=<script>' });
+  const forge = await connexion(1, '/api/auth/connexion', { revenir: false, navigateur: 'tisseo_demande=<script>' });
   assert.match(forge.temoin, /^tisseo_demande=[0-9a-f]{36}$/);
+});
+
+test('adresses visitées par le navigateur : sous /api/, et les anciennes restent servies', async () => {
+  // Un service worker ancien intercepte toute navigation hors /api/ et sert la
+  // page d'accueil à la place d'une redirection (panne du 02/10/2026).
+  const neuve = await fetch(`${B.base}/api/auth/connexion`, { redirect: 'manual' });
+  assert.equal(neuve.status, 302);
+  assert.equal(new URL(neuve.headers.get('location')).searchParams.get('redirect_uri'), `${B.base}/api/auth/retour`, 'le retour est sous /api/ lui aussi');
+  // Les anciennes adresses répondent par une PAGE (200) qui renvoie, jamais par
+  // une redirection : c'est la seule forme qu'un ancien service worker laisse passer.
+  for (const [ancienne, nouvelle] of [
+    ['/auth/connexion?retour=%2F%3Fcompte%3D1&app=android', '/api/auth/connexion?retour=%2F%3Fcompte%3D1&app=android'],
+    ['/auth/retour?code=x&state=y', '/api/auth/retour?code=x&state=y'],
+    ['/oauth/authorize?client_id=tl_x&state=a%20b', '/api/oauth/authorize?client_id=tl_x&state=a%20b'],
+    ['/oauth/accord?demande=abc', '/api/oauth/accord?demande=abc'],
+    ['/auth/connexion', '/api/auth/connexion'],
+  ]) {
+    const r = await fetch(B.base + ancienne, { redirect: 'manual' });
+    assert.equal(r.status, 200, ancienne);
+    assert.equal(r.headers.get('refresh'), `0; url=${nouvelle}`, ancienne);
+    assert.equal(r.headers.get('location'), null);
+    assert.ok((await r.text()).includes(`href="${nouvelle.replace(/&/g, '&amp;')}"`), 'et un lien pour qui a désactivé le renvoi automatique');
+  }
+  // La requête d'origine ne peut pas emmener ailleurs : la cible commence toujours par notre chemin.
+  const tordu = await fetch(`${B.base}/auth/connexion?retour=https://pirate.example&x=%0d%0aSet-Cookie:a`, { redirect: 'manual' });
+  assert.match(tordu.headers.get('refresh'), /^0; url=\/api\/auth\/connexion\?/);
+  assert.equal(tordu.headers.getSetCookie().length, 0);
+});
+
+test('écran d’accord : l’envoi du formulaire tel qu’un navigateur le fait', async () => {
+  const cookie = await session(1);
+  const ouvrir = async () => {
+    const reg = await api(null, 'POST', '/oauth/register', { client_name: 'ChatGPT', redirect_uris: [CHATGPT] });
+    const q = new URLSearchParams({ client_id: reg.json.client_id, redirect_uri: CHATGPT, response_type: 'code', code_challenge: pkce().challenge, code_challenge_method: 'S256', scope: 'tisseo', state: 'e' });
+    const r = await fetch(`${B.base}/api/oauth/authorize?${q}`, { redirect: 'manual' });
+    return r.headers.get('location').split('=')[1];
+  };
+  const envoyer = async (demande, entetes) => fetch(`${B.base}/api/oauth/accord`, {
+    method: 'POST', redirect: 'manual', headers: { Cookie: cookie, 'Content-Type': 'application/x-www-form-urlencoded', ...entetes },
+    body: new URLSearchParams({ demande, choix: 'oui' }),
+  });
+  const page = await fetch(`${B.base}/api/oauth/accord?demande=${await ouvrir()}`, { headers: { Cookie: cookie } });
+  assert.equal(page.headers.get('referrer-policy'), 'same-origin', '« no-referrer » ferait envoyer « Origin: null » par Chrome, et l’accord serait refusé');
+  assert.match(await page.text(), /<form method="post" action="\/api\/oauth\/accord">/);
+
+  assert.equal((await envoyer(await ouvrir(), { Origin: B.base })).status, 303, 'origine de nos pages : accepté');
+  assert.equal((await envoyer(await ouvrir(), { Origin: 'null', 'Sec-Fetch-Site': 'same-origin' })).status, 303, 'origine masquée mais envoi venu de nos pages : accepté');
+  assert.equal((await envoyer(await ouvrir(), { Origin: 'null', 'Sec-Fetch-Site': 'cross-site' })).status, 401, 'origine masquée, envoi venu d’ailleurs : refusé');
+  assert.equal((await envoyer(await ouvrir(), { Origin: 'null' })).status, 401, 'origine masquée, sans autre indice : refusé');
+  assert.equal((await envoyer(await ouvrir(), { Origin: 'https://pirate.example' })).status, 401, 'autre site : refusé');
 });
 
 test('déconnexion : le jeton ne sert plus', async () => {
@@ -241,7 +292,7 @@ test('une écriture portée par le cookie doit venir de nos pages', async () => 
 });
 
 test('application Android : un billet à usage unique, jamais le jeton dans l’adresse', async () => {
-  const { res } = await connexion(3, '/auth/connexion?app=android');
+  const { res } = await connexion(3, '/api/auth/connexion?app=android');
   assert.equal(res.status, 200);
   assert.equal(cookieDe(res), '', 'aucun cookie pour l’application');
   const html = await res.text();
@@ -406,7 +457,7 @@ test('Atlas en panne : les trajets marchent, les amis disent pourquoi ils ne mar
     assert.equal(a.json.code, 'ATLAS_SESSION');
     assert.equal((await api(cookie, 'GET', '/api/compte/trajets')).statut, 200);
     assert.equal((await api(cookie, 'POST', '/api/compte/trajets', { de: 'Capitole', a: 'Balma' })).statut, 201);
-    const c = await fetch(`${B.base}/auth/connexion`, { redirect: 'manual' });
+    const c = await fetch(`${B.base}/api/auth/connexion`, { redirect: 'manual' });
     const versAtlas = new URL(c.headers.get('location')); versAtlas.searchParams.set('compte', '1');
     assert.equal((await fetch(versAtlas, { redirect: 'manual' })).status, 503);
   } finally { B.fa.etat.panne = false; }
@@ -419,7 +470,7 @@ test('découverte : chaque adresse MCP se décrit, sur l’hôte par lequel on l
   assert.deepEqual(r.authorization_servers, [B.base]);
   assert.equal((await (await fetch(`${B.base}/.well-known/oauth-protected-resource/mcp`)).json()).resource, `${B.base}/mcp`);
   const s = await (await fetch(`${B.base}/.well-known/oauth-authorization-server`)).json();
-  assert.equal(s.authorization_endpoint, `${B.base}/oauth/authorize`);
+  assert.equal(s.authorization_endpoint, `${B.base}/api/oauth/authorize`);
   assert.deepEqual(s.token_endpoint_auth_methods_supported, ['none']);
   // Un en-tête Host fantaisiste ne fabrique pas d'adresses vers ailleurs : hors
   // de la machine locale, tout est rapporté à l'adresse publique. `fetch`
@@ -427,7 +478,7 @@ test('découverte : chaque adresse MCP se décrit, sur l’hôte par lequel on l
   for (const hote of ['pirate.example', 'tisseo.plagnito.com', 'localhost.pirate.example', '127.0.0.1.pirate.example:80']) {
     const d = await brut('/.well-known/oauth-authorization-server', hote);
     assert.equal(d.issuer, 'https://tisseo.plagnito.com', hote);
-    assert.equal(d.authorization_endpoint, 'https://tisseo.plagnito.com/oauth/authorize', hote);
+    assert.equal(d.authorization_endpoint, 'https://tisseo.plagnito.com/api/oauth/authorize', hote);
   }
 });
 
@@ -442,7 +493,7 @@ test('le débit des connexions est borné', async () => {
   await new Promise((ok) => s.once('listening', ok));
   try {
     const statuts = [];
-    for (let i = 0; i < 32; i++) statuts.push((await fetch(`http://127.0.0.1:${s.address().port}/auth/connexion`, { redirect: 'manual' })).status);
+    for (let i = 0; i < 32; i++) statuts.push((await fetch(`http://127.0.0.1:${s.address().port}/api/auth/connexion`, { redirect: 'manual' })).status);
     assert.deepEqual([...new Set(statuts.slice(0, 30))], [302]);
     assert.deepEqual(statuts.slice(30), [429, 429]);
   } finally { s.close(); }
@@ -466,11 +517,11 @@ test('/mcp/compte exige une autorisation ; /mcp reste public', async () => {
 test('l’accord : sans session on passe par Atlas, et l’écran nomme où partent les réponses', async () => {
   const reg = await api(null, 'POST', '/oauth/register', { client_name: 'ChatGPT <b>', redirect_uris: [CHATGPT] });
   const q = new URLSearchParams({ client_id: reg.json.client_id, redirect_uri: CHATGPT, response_type: 'code', code_challenge: pkce().challenge, code_challenge_method: 'S256' });
-  const r1 = await fetch(`${B.base}/oauth/authorize?${q}`, { redirect: 'manual' });
+  const r1 = await fetch(`${B.base}/api/oauth/authorize?${q}`, { redirect: 'manual' });
   const accord = r1.headers.get('location');
   const anonyme = await fetch(B.base + accord, { redirect: 'manual' });
   assert.equal(anonyme.status, 302);
-  assert.equal(anonyme.headers.get('location'), `/auth/connexion?retour=${encodeURIComponent(accord)}`);
+  assert.equal(anonyme.headers.get('location'), `/api/auth/connexion?retour=${encodeURIComponent(accord)}`);
   // Après la connexion, on revient exactement sur l'écran d'accord.
   const { res, cookie } = await connexion(1, anonyme.headers.get('location'));
   assert.equal(res.headers.get('location'), accord);
@@ -492,9 +543,9 @@ test('l’accord : sans session on passe par Atlas, et l’écran nomme où part
   assert.equal(new URL(refus.headers.get('location')).searchParams.get('error'), 'access_denied');
 
   // Client inconnu ou adresse de retour non déclarée : l'erreur s'affiche ICI.
-  const inconnu = await fetch(`${B.base}/oauth/authorize?${new URLSearchParams({ ...Object.fromEntries(q), client_id: 'tl_inconnu' })}`, { redirect: 'manual' });
+  const inconnu = await fetch(`${B.base}/api/oauth/authorize?${new URLSearchParams({ ...Object.fromEntries(q), client_id: 'tl_inconnu' })}`, { redirect: 'manual' });
   assert.equal(inconnu.status, 400);
-  const ailleurs = await fetch(`${B.base}/oauth/authorize?${new URLSearchParams({ ...Object.fromEntries(q), redirect_uri: 'https://pirate.example/cb' })}`, { redirect: 'manual' });
+  const ailleurs = await fetch(`${B.base}/api/oauth/authorize?${new URLSearchParams({ ...Object.fromEntries(q), redirect_uri: 'https://pirate.example/cb' })}`, { redirect: 'manual' });
   assert.equal(ailleurs.status, 400, 'jamais de redirection vers une adresse non déclarée');
   assert.equal(ailleurs.headers.get('location'), null);
 });

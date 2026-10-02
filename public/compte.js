@@ -95,7 +95,7 @@
       const retour = encodeURIComponent(`/?compte=1${params.get('partage') ? `&partage=${encodeURIComponent(params.get('partage'))}` : ''}`);
       corps.innerHTML = `
         <p class="cpt-note">${etat.panne ? h(etat.panne) : 'Avec un compte Atlas, tes trajets te suivent d’un appareil à l’autre : enregistre ceux que tu fais souvent, planifie-les, partage-les avec tes amis.'}</p>
-        <a class="mini on cpt-large" href="/auth/connexion?retour=${retour}">Se connecter avec Atlas</a>
+        <a class="mini on cpt-large" href="/api/auth/connexion?retour=${retour}">Se connecter avec Atlas</a>
         <p class="cpt-note cpt-fin">Sans compte, la carte et l’itinéraire restent entièrement utilisables.</p>`;
       return;
     }
@@ -445,7 +445,7 @@
     zone.className = 'cpt-apres';
     zone.innerHTML = etat.connecte
       ? '<button class="mini" data-apres="enregistrer">☆ Enregistrer ce trajet</button><button class="mini" data-apres="planifier">Planifier</button><button class="mini" data-apres="partager">Partager</button>'
-      : `<a class="mini" href="/auth/connexion?retour=${encodeURIComponent('/?compte=1')}">Se connecter pour enregistrer ce trajet</a>`;
+      : `<a class="mini" href="/api/auth/connexion?retour=${encodeURIComponent('/?compte=1')}">Se connecter pour enregistrer ce trajet</a>`;
     boite.appendChild(zone);
   }
   new MutationObserver(apresResultat).observe($('jResults'), { childList: true });

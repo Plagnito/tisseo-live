@@ -269,6 +269,15 @@ app.use((req, res, next) => {
   };
   next();
 });
+// Le service worker ne doit JAMAIS être gardé par un cache intermédiaire : le
+// 02/10/2026, le CDN servait encore l'ancien sw.js plus de huit heures après un
+// déploiement (malgré max-age=300), et les navigateurs restaient tenus par un
+// service worker qui cassait la connexion. Les trois en-têtes visent le
+// navigateur, les CDN en général, et Cloudflare en particulier.
+app.get('/sw.js', (req, res) => {
+  res.set({ 'Cache-Control': 'no-cache, no-store, must-revalidate', 'CDN-Cache-Control': 'no-store', 'Cloudflare-CDN-Cache-Control': 'no-store' })
+    .type('application/javascript').sendFile(join(__dirname, 'public', 'sw.js'));
+});
 app.use(express.static(join(__dirname, 'public'), { maxAge: '5m' }));
 // Les modules purs de lib/ (motion, itinerary) sont servis tels quels : le
 // navigateur importe exactement le code que couvre `npm test`, au lieu d'une
