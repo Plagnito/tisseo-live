@@ -22,13 +22,59 @@
   const saved = readJson('tisseo.city.settings', {});
   let profile = readJson('tisseo.city.profile', { id:'fr:31555', name:'Toulouse',lat:43.6047,lon:1.4442,timezone:'Europe/Paris',transport:'tisseo' });
   const requestedCity = new URLSearchParams(location.search).get('city');
-  if (requestedCity && requestedCity !== profile.id) profile = { id:requestedCity, name:'Ville',lat:43.6047,lon:1.4442,transport:'osm' };
+  // `pending` : ville demandée par un lien, dont on ne connaît encore ni le nom ni
+  // l'emplacement. La carte n'est recentrée qu'une fois, quand le catalogue répond.
+  if (requestedCity && requestedCity !== profile.id) profile = { id:requestedCity, name:'Ville',lat:43.6047,lon:1.4442,transport:'osm',pending:true };
   let epoch=0, tourPoints=[], tourTicket=0, selectionRevision=0;
   const cityUrl=(path)=>path+(path.includes('?')?'&':'?')+'city='+encodeURIComponent(profile.id);
-  const cityZone=()=>profile.timezone || weather?.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const cityDay=(value=Date.now())=>new Intl.DateTimeFormat('en-CA',{timeZone:cityZone(),year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
-  function eventOnDay(p,day=cityDay()){return p.sessions?.length?p.sessions.some(s=>cityDay(s.begin)<=day&&cityDay(s.end)>=day):p.start_date<=day&&p.end_date>=day;}
-  function eventTonight(p,day=cityDay()){return p.sessions?.some(s=>cityDay(s.begin)<=day&&cityDay(s.end)>=day&&Date.parse(s.end)>Date.now()&&(cityDay(s.end)>day||Number(new Intl.DateTimeFormat('en-GB',{timeZone:cityZone(),hour:'2-digit',hourCycle:'h23'}).format(new Date(s.end)))>=18))||false;}
+  const localZone=Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const cityZone=()=>profile.timezone || weather?.timezone || localZone;
+  // Un Intl.DateTimeFormat coûte cher à CONSTRUIRE. Il en était fabriqué deux par
+  // séance d'événement, à chaque filtrage, à chaque déplacement de la carte : sur
+  // Paris (1 300 événements, 25 000 séances) la page ne répondait plus. Un seul
+  // par fuseau et par usage, gardé.
+  const formats=new Map();
+  function zoned(kind,locale,options){
+    const zone=cityZone(),key=kind+'|'+zone;let f=formats.get(key);
+    if(!f){try{f=new Intl.DateTimeFormat(locale,{timeZone:zone,...options});}catch{f=new Intl.DateTimeFormat(locale,options);}formats.set(key,f);}
+    return f;
+  }
+  const cityDay=(value=Date.now())=>zoned('day','en-CA',{year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+  // Les séances ne sont plus comparées jour par jour en formatant chacune de
+  // leurs dates : on calcule UNE fois l'instant où commence un jour dans le
+  // fuseau de la ville, et tout le reste est une comparaison de nombres.
+  const dayStarts=new Map();
+  function zoneOffset(ms){
+    const parts=zoned('parts','en-GB',{year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(ms));
+    const g=(type)=>Number(parts.find(p=>p.type===type).value);
+    return Date.UTC(g('year'),g('month')-1,g('day'),g('hour'),g('minute'),g('second'))-Math.floor(ms/1000)*1000;
+  }
+  // Minuit (heure de la ville) du jour « AAAA-MM-JJ », en millisecondes. Le
+  // décalage est pris à midi puis affiné à minuit : juste même un jour de
+  // changement d'heure.
+  function dayStart(day){
+    const key=cityZone()+'|'+day;let start=dayStarts.get(key);
+    if(start===undefined){
+      const [y,m,d]=day.split('-').map(Number),midnight=Date.UTC(y,m-1,d);
+      start=midnight-zoneOffset(midnight+12*3600_000);start=midnight-zoneOffset(start);
+      if(dayStarts.size>400)dayStarts.clear();dayStarts.set(key,start);
+    }
+    return start;
+  }
+  const nextDays=new Map();
+  const nextDay=(day)=>{let n=nextDays.get(day);if(!n){const [y,m,d]=day.split('-').map(Number);n=new Date(Date.UTC(y,m-1,d+1)).toISOString().slice(0,10);if(nextDays.size>400)nextDays.clear();nextDays.set(day,n);}return n;};
+  const dayEnd=(day)=>dayStart(nextDay(day));
+  const sessionCache=new WeakMap();
+  function sessionTimes(p){
+    let list=sessionCache.get(p);
+    if(!list){list=(p.sessions||[]).map(s=>({b:Date.parse(s.begin),e:Date.parse(s.end)}));sessionCache.set(p,list);}
+    return list;
+  }
+  // Une séance touche-t-elle l'intervalle [from, to[ ?
+  const sessionIn=(p,from,to)=>sessionTimes(p).some(s=>s.b<to&&s.e>=from);
+  function eventOnDay(p,day=today()){return p.sessions?.length?sessionIn(p,dayStart(day),dayEnd(day)):p.start_date<=day&&p.end_date>=day;}
+  // « Ce soir » : une séance d'aujourd'hui, pas encore finie, qui se termine à 18 h ou après (ou le lendemain).
+  function eventTonight(p,day=today()){if(!p.sessions?.length)return false;const from=dayStart(day),to=dayEnd(day),now=Date.now();return sessionTimes(p).some(s=>s.b<to&&s.e>=from&&s.e>now&&s.e>=from+18*3600_000);}
   function cityLabels(){
     $('cityPickerTitle').textContent=profile.name+' · changer de ville';$('cityEyebrow').textContent=profile.name.toUpperCase()+' & ALENTOURS';$('cityTodayTitle').textContent='Aujourd’hui à '+profile.name;
     $('cityMapNote').querySelector('b').textContent=profile.name+', côté ville';document.querySelector('.brand .city').textContent=active?profile.name:'Toulouse';
@@ -38,18 +84,24 @@
     if(active){$('appTitle').innerHTML=h(profile.name)+' <em>Ville</em>';document.title=profile.name+' Ville — Explorer la ville';}
   }
   function applyProfile(p){
-    if(!p?.id)return;profile=p;epoch++;tourTicket++;isoRequest++;loadingCatalog=false;todayLoading=false;catalogError=false;data.clear();loading.clear();queue.length=0;catalog=[];categories.clear();selectedPlace=null;favoritesOnly=false;weather=null;alerts=null;myLocation=null;iso=null;isoOrigin=null;tourPoints=[];
-    for(const l of [layer,focusLayer,walkLayer,zoneLayer])l.clearLayers();$('cityDetail').classList.add('hidden');$('cityTourResult').textContent='';$('cityTransport').checked=false;renderTour();
+    if(!p?.id)return;profile=p;epoch++;tourTicket++;isoRequest++;loadingCatalog=false;todayLoading=false;catalogError=false;data.clear();dataRev++;loading.clear();queue.length=0;catalog=[];categories.clear();selectedPlace=null;favoritesOnly=false;weather=null;alerts=null;myLocation=null;iso=null;isoOrigin=null;tourPoints=[];
+    for(const l of [layer,focusLayer,walkLayer,zoneLayer])l.clearLayers();markersById.clear();markersKey=null;$('cityDetail').classList.add('hidden');$('cityTourResult').textContent='';$('cityTransport').checked=false;renderTour();
     try{localStorage.setItem('tisseo.city.profile',JSON.stringify(p));}catch{}const url=new URL(location.href);url.searchParams.set('city',p.id);history.replaceState(null,'',url);map.setView([p.lat,p.lon],14);cityLabels();loadCatalog();loadToday();syncTransport();
   }
 
   let active = false, catalog = [], categories = new Map(), selected = new Set(), preset = 'all', initialized = false, myLocation = null;
   let selectedPlace = null, listLimit = 30, renderTimer, searchTimer, loadingCatalog = false, catalogError = false;
   const data = new Map(), loading = new Set(), markersById = new Map();
+  // dataRev / favRev : relevés à chaque changement des données ou des favoris.
+  // Ils entrent dans la clé du filtrage mémorisé (voir allPlaces).
+  let dataRev = 0, favRev = 0;
   const favorites = new Map(Object.entries(readJson('tisseo.city.favorites', {})));
   let favoritesOnly = false, intent = '', iso = null, isoOrigin = null, isoRequest = 0, weather = null, alerts = null, todayLoading = false;
   const walkLayer = L.layerGroup(), zoneLayer = L.layerGroup();
   let detailOrigin = null;
+  // Pas de chunkedLoading : un ajout par tranches continue après un clearLayers()
+  // et ferait réapparaître les marqueurs de la ville précédente. L'ajout par lot
+  // (addLayers, voir rebuildMarkers) suffit : seul ce qui est à l'écran entre dans le DOM.
   const layer = useCluster ? L.markerClusterGroup({ maxClusterRadius: 48, showCoverageOnHover: false, disableClusteringAtZoom: 18,
     iconCreateFunction: (c) => {
       const mix = new Map(); for (const m of c.getAllChildMarkers()) mix.set(m.options.cityCategory, (mix.get(m.options.cityCategory) || 0) + 1);
@@ -57,16 +109,30 @@
       const segments = sorted.map(([id, n]) => { const start = pct; pct += n / c.getChildCount() * 100; return `${categories.get(id)?.color || '#e9aa89'} ${start}% ${pct}%`; });
       const title = sorted.map(([id, n]) => `${n} ${categories.get(id)?.label || id}`).join(', ');
       return L.divIcon({ className: '', html: `<div class="city-cluster city-cluster-mix" style="background:conic-gradient(${segments.join(',')})" title="${h(title)}"><span><b>${c.getChildCount()}</b><small>${sorted.length > 1 ? `${sorted.length} types` : h(categories.get(sorted[0][0])?.label || '')}</small></span></div>`, iconSize: [48, 48] });
-    } }) : L.layerGroup();
+    } }) : L.featureGroup();
+  // Un seul écouteur pour tous les lieux, au lieu de deux fermetures et d'une
+  // infobulle PAR marqueur : l'infobulle n'est créée qu'au premier survol.
+  layer.on('click', (e) => { const p = e.layer?.options?.cityPlace; if (p) selectPlace(p); });
+  layer.on('mouseover', (e) => {
+    const m = e.layer, p = m?.options?.cityPlace;
+    if (!p || m.getTooltip?.()) return;
+    m.bindTooltip(h(p.name), { className: 'city-tooltip', direction: 'top', offset: [0, -13] }); m.openTooltip();
+  });
   const focusLayer = L.layerGroup();
   const queue = [];
   let busy = 0;
   const date = (value, withTime = false) => {
     if (!value) return 'date non fournie';
     const d = new Date(value.length === 10 ? `${value}T12:00:00` : value);
-    return Number.isFinite(d.getTime()) ? d.toLocaleString('fr-FR', { timeZone: cityZone(), day: 'numeric', month: 'short', year: 'numeric', ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}) }) : 'date non fournie';
+    return Number.isFinite(d.getTime()) ? zoned(withTime ? 'datetime' : 'date', 'fr-FR', { day: 'numeric', month: 'short', year: 'numeric', ...(withTime ? { hour: '2-digit', minute: '2-digit' } : {}) }).format(d) : 'date non fournie';
   };
-  const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: cityZone(), year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  // Le jour courant est demandé pour chaque lieu filtré : gardé dix secondes.
+  let dayMemo = { at: 0, zone: '', value: '' };
+  const today = () => {
+    const now = Date.now(), zone = cityZone();
+    if (now - dayMemo.at > 10_000 || dayMemo.zone !== zone) dayMemo = { at: now, zone, value: cityDay(now) };
+    return dayMemo.value;
+  };
   const distance = (p) => map.distance(map.getCenter(), [p.lat, p.lon]);
   const distLabel = (d) => d < 1000 ? `${Math.round(d / 10) * 10} m` : `${(d / 1000).toFixed(1)} km`;
   function remember() {
@@ -110,7 +176,13 @@
         // utiles aux lieux de la ville ; le bouton de thème reste disponible.
         baseMode = 'light'; baseIdx = 0; tileErrors = 0;
         if (!vectorOnly && tileSets.light?.length) setBaseLayer();
-        map.setView([profile.lat, profile.lon], 14);
+        // Une seule mise en place de la vue, et sans animation. Deux à la suite
+        // (Toulouse par défaut, puis la ville d'un lien direct ?city=…) se
+        // marchaient dessus dès que le catalogue répondait en moins de 300 ms : le
+        // zoom animé ramenait la carte à Toulouse, et le groupe de marqueurs,
+        // encore « en animation », gardait l'ancienne emprise — aucun lieu affiché
+        // tant qu'on ne bougeait pas la carte.
+        if (!profile.pending) map.setView([profile.lat, profile.lon], 14, { animate: false });
         loadCatalog();
         loadToday();
       }
@@ -142,9 +214,9 @@
       if (!r.ok) throw new Error('Catalogue indisponible');
       const j = await r.json();
       if(generation!==epoch)return;if (!Array.isArray(j.categories)) throw new Error('Catalogue incorrect');
-      if(j.profile){const old=profile.name;profile=j.profile;cityLabels();if(old!==profile.name)map.setView([profile.lat,profile.lon],14);try{localStorage.setItem('tisseo.city.profile',JSON.stringify(profile));}catch{}}
+      if(j.profile){const old=profile.name,pending=profile.pending;profile=j.profile;cityLabels();if(pending||old!==profile.name)map.setView([profile.lat,profile.lon],14,{animate:false});try{localStorage.setItem('tisseo.city.profile',JSON.stringify(profile));}catch{}}
       catalog = j.categories;$('cityCoverage').textContent=j.notice||'Données publiques · couverture partielle, informations à vérifier auprès des lieux.';
-      categories = new Map(catalog.map((c) => [c.id, c]));
+      categories = new Map(catalog.map((c) => [c.id, c])); pinCache.clear();
       const wanted = restoreSelection && selectionAtStart === selectionRevision
         ? (Array.isArray(saved.categories) ? saved.categories : ['bikes', 'parking', 'events', 'culture', 'parks', 'services'])
         : [...selected];
@@ -171,55 +243,108 @@
       const id = queue.shift(); busy++;const generation=epoch;
       fetch(cityUrl(`/api/city/places?category=${encodeURIComponent(id)}`), { signal: AbortSignal.timeout(50_000) })
         .then(async (r) => { if (!r.ok) throw new Error('Source indisponible'); return r.json(); })
-        .then((j) => { if(generation!==epoch)return;if (!Array.isArray(j.places)) throw new Error('Données incorrectes'); data.set(id, j); })
+        .then((j) => { if(generation!==epoch)return;if (!Array.isArray(j.places)) throw new Error('Données incorrectes'); data.set(id, j); dataRev++; })
         .catch(() => {
           if(generation!==epoch)return;const old = data.get(id);
-          data.set(id, { ...old, places: old?.places || [], status: old?.places?.length ? 'stale' : 'unavailable', message: 'Source indisponible. Clique sur ↻ pour réessayer.' });
+          data.set(id, { ...old, places: old?.places || [], status: old?.places?.length ? 'stale' : 'unavailable', message: 'Source indisponible. Clique sur ↻ pour réessayer.' }); dataRev++;
         })
         .finally(() => { busy--;if(generation===epoch){loading.delete(id);rebuildMarkers();renderCategories();render();renderDetail();}pump(); });
     }
   }
-  function dateAllowed(p) {
-    const day = today();
-    if ((p.category === 'events' || p.category === 'works') && p.end_date < day) return false;
-    if (p.category !== 'events') return true;
-    if ($('cityEventTag').value && !p.tags?.includes($('cityEventTag').value)) return false;
-    if ($('cityPeriod').value === 'upcoming') return true;
-    if ($('cityPeriod').value === 'tonight') {
-      return eventTonight(p,day);
-    }
+  // Réglages lus UNE fois par filtrage (et non une fois par lieu : sept lectures
+  // du DOM multipliées par des milliers de lieux).
+  function readFilters() {
+    const day = today(), period = $('cityPeriod').value;
     const end = new Date(`${day}T12:00:00Z`);
-    if ($('cityPeriod').value === 'week') end.setUTCDate(end.getUTCDate() + 6);
-    const lastDay = end.toISOString().slice(0, 10);
-    if (p.sessions?.length && window.CE) return p.sessions.some((s) => cityDay(s.begin) <= lastDay && cityDay(s.end) >= day);
-    return p.start_date <= lastDay && p.end_date >= day;
+    if (period === 'week') end.setUTCDate(end.getUTCDate() + 6);
+    return { day, period, lastDay: end.toISOString().slice(0, 10), tag: $('cityEventTag').value, q: norm($('citySearch').value.trim()),
+      open: $('cityOpen').checked, free: $('cityFree').checked, accessible: $('cityAccessible').checked, vegetarian: $('cityVegetarian').checked,
+      minutes: Number($('cityWalkMinutes').value) };
   }
+  function dateAllowed(p, f) {
+    if ((p.category === 'events' || p.category === 'works') && p.end_date < f.day) return false;
+    if (p.category !== 'events') return true;
+    if (f.tag && !p.tags?.includes(f.tag)) return false;
+    if (f.period === 'upcoming') return true;
+    if (f.period === 'tonight') return eventTonight(p, f.day);
+    if (p.sessions?.length && window.CE) return sessionIn(p, dayStart(f.day), dayEnd(f.lastDay));
+    return p.start_date <= f.lastDay && p.end_date >= f.day;
+  }
+  // Le résultat du filtrage est gardé tant que rien de ce dont il dépend n'a
+  // changé. Avant, il était recalculé trois fois par rendu et à chaque
+  // déplacement de la carte — c'est ce qui figeait la page sur une grande ville.
+  // Ne pas modifier le tableau rendu : il est partagé.
+  let placesMemo = { key: null, list: [] };
   function allPlaces() {
-    const q = norm($('citySearch').value.trim());
+    const f = readFilters();
+    // « Ouvert maintenant » et « ce soir » dépendent de l'heure : la clé change chaque minute.
+    const minute = f.open || f.period === 'tonight' ? Math.floor(Date.now() / 60_000) : 0;
+    const key = [dataRev, favRev, profile.id, categories.size, [...selected].join(','), favoritesOnly ? 'f' : '', f.q, f.period, f.tag, f.day,
+      +f.open, +f.free, +f.accessible, +f.vegetarian, iso ? `${isoRequest}:${f.minutes}` : '', minute].join('|');
+    if (placesMemo.key === key) return placesMemo.list;
     const pool = favoritesOnly ? [...favorites.values()].map((p) => data.get(p.category)?.places.find((x) => x.id === p.id) || p) : [...selected].flatMap((id) => data.get(id)?.places || []);
-    return pool.filter((p) => (p.city_id||'fr:31555')===profile.id && categories.has(p.category) && dateAllowed(p) && (!q || norm(`${p.name} ${p.address} ${p.city} ${p.subtitle} ${p.description}`).includes(q))
-      && (!$('cityOpen').checked || (profile.timezone==='Europe/Paris'?(window.CE?.openingState(p.opening_hours)||p.opening_state):p.opening_state) === 'open')
-      && (!$('cityFree').checked || p.free_access === true || p.tags?.includes('free'))
-      && (!$('cityAccessible').checked || p.wheelchair === 'yes') && (!$('cityVegetarian').checked || p.vegetarian === true)
-      && (!iso || (window.CE?.walkingBand(p, iso.features) ?? Infinity) <= Number($('cityWalkMinutes').value)));
+    const list = pool.filter((p) => (p.city_id||'fr:31555')===profile.id && categories.has(p.category) && dateAllowed(p, f) && (!f.q || norm(`${p.name} ${p.address} ${p.city} ${p.subtitle} ${p.description}`).includes(f.q))
+      && (!f.open || (profile.timezone==='Europe/Paris'?(window.CE?.openingState(p.opening_hours)||p.opening_state):p.opening_state) === 'open')
+      && (!f.free || p.free_access === true || p.tags?.includes('free'))
+      && (!f.accessible || p.wheelchair === 'yes') && (!f.vegetarian || p.vegetarian === true)
+      && (!iso || (window.CE?.walkingBand(p, iso.features) ?? Infinity) <= f.minutes));
+    placesMemo = { key, list };
+    return list;
   }
   function visiblePlaces() {
-    const bounds = map.getBounds();
-    return allPlaces().filter((p) => !$('cityInView').checked || bounds.contains([p.lat, p.lon])).sort((a, b) => distance(a) - distance(b) || a.name.localeCompare(b.name, 'fr'));
+    const inView = $('cityInView').checked, bounds = map.getBounds(), c = map.getCenter();
+    const south = bounds.getSouth(), north = bounds.getNorth(), west = bounds.getWest(), east = bounds.getEast();
+    // Distance au centre calculée UNE fois par lieu (et non à chaque comparaison
+    // du tri), en plan : à l'échelle d'une ville l'ordre est le même.
+    const kx = Math.cos(c.lat * Math.PI / 180), ranked = [];
+    for (const p of allPlaces()) {
+      if (inView && (p.lat < south || p.lat > north || p.lon < west || p.lon > east)) continue;
+      const dx = (p.lon - c.lng) * kx, dy = p.lat - c.lat;
+      ranked.push({ p, d: dx * dx + dy * dy });
+    }
+    ranked.sort((a, b) => a.d - b.d || a.p.name.localeCompare(b.p.name, 'fr'));
+    return ranked.map((x) => x.p);
   }
+  // Une icône par catégorie, partagée par tous ses marqueurs.
+  const pinCache = new Map();
   function pin(p, selectedIcon = false) {
-    const c = categories.get(p.category);
-    return L.divIcon({ className: 'city-pin-wrap', iconSize: [30, 30], iconAnchor: [15, 15], html: `<div class="city-pin${selectedIcon ? ' selected' : ''}" style="--c:${c.color}">${svg(c.icon)}</div>` });
+    const key = p.category + (selectedIcon ? '|s' : '');
+    let icon = pinCache.get(key);
+    if (!icon) {
+      const c = categories.get(p.category);
+      icon = L.divIcon({ className: 'city-pin-wrap', iconSize: [30, 30], iconAnchor: [15, 15], html: `<div class="city-pin${selectedIcon ? ' selected' : ''}" style="--c:${c.color}">${svg(c.icon)}</div>` });
+      pinCache.set(key, icon);
+    }
+    return icon;
   }
+  // Les marqueurs ne sont plus tous détruits puis recréés à chaque appel : on
+  // ne retire que ceux qui sortent du filtrage, on n'ajoute que les nouveaux,
+  // et par lots (un ajout marqueur par marqueur dans le groupe de regroupement
+  // est ce qui coûtait le plus).
+  let markersKey = null;
   function rebuildMarkers() {
-    layer.clearLayers(); markersById.clear();
     const points = allPlaces();
-    for (const p of points) {
-      if (p.id === selectedPlace?.id) continue;
-      const m = L.marker([p.lat, p.lon], { icon: pin(p), title: p.name, keyboard: true, cityCategory: p.category });
-      m.bindTooltip(h(p.name), { className: 'city-tooltip', direction: 'top', offset: [0, -13] });
-      m.on('click', () => selectPlace(p));
-      markersById.set(p.id, m); layer.addLayer(m);
+    const key = placesMemo.key + '|' + (selectedPlace?.id || '');
+    if (key !== markersKey) {
+      markersKey = key;
+      const wanted = new Map();
+      for (const p of points) if (p.id !== selectedPlace?.id) wanted.set(p.id, p);
+      const gone = [];
+      for (const [id, m] of markersById) {
+        const p = wanted.get(id), old = m.options.cityPlace;
+        if (p && p.lat === old.lat && p.lon === old.lon && p.category === old.category) { m.options.cityPlace = p; continue; }
+        gone.push(m); markersById.delete(id);
+      }
+      const fresh = [];
+      for (const [id, p] of wanted) {
+        if (markersById.has(id)) continue;
+        const m = L.marker([p.lat, p.lon], { icon: pin(p), title: p.name, keyboard: true, cityCategory: p.category, cityPlace: p });
+        markersById.set(id, m); fresh.push(m);
+      }
+      // Tout l'ancien jeu a disparu (changement de ville, de préréglage) : vider d'un coup.
+      if (gone.length && markersById.size === fresh.length) layer.clearLayers();
+      else if (gone.length) { if (layer.removeLayers) layer.removeLayers(gone); else for (const m of gone) layer.removeLayer(m); }
+      if (fresh.length) { if (layer.addLayers) layer.addLayers(fresh); else for (const m of fresh) layer.addLayer(m); }
     }
     focusLayer.clearLayers();
     if (selectedPlace && points.some((p) => p.id === selectedPlace.id)) {
@@ -296,7 +421,7 @@
     $('cityDetail').querySelectorAll('#cityFavorite, #cityWalk, .city-detail-sessions').forEach((el) => el.remove());
     const favoriteButton = document.createElement('button'); favoriteButton.id = 'cityFavorite'; favoriteButton.textContent = favorites.has(p.id) ? '★ Retirer des favoris' : '☆ Enregistrer ce lieu';
     favoriteButton.onclick = () => {
-      if (favorites.has(p.id)) favorites.delete(p.id); else favorites.set(p.id, p);
+      if (favorites.has(p.id)) favorites.delete(p.id); else favorites.set(p.id, p); favRev++;
       try { localStorage.setItem('tisseo.city.favorites', JSON.stringify(Object.fromEntries(favorites))); } catch { toast('Le stockage des favoris est indisponible.'); }
       renderDetail(); rebuildMarkers(); render();
     };

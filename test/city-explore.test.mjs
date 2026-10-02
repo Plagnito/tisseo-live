@@ -59,3 +59,25 @@ test('API piéton : cache partagé et demande explicite piétonne', async () => 
   let calls=0;const s=createCityContext({fetcher:async(url,opts)=>{calls++;assert.equal(JSON.parse(opts.body).costing,'pedestrian');return {ok:true,json:async()=>({features:[5,10,15].map(contour=>({properties:{contour},geometry:{type:'Polygon',coordinates:[[[1,43],[2,43],[2,44],[1,43]]]}}))})};}});
   const [a,b]=await Promise.all([s.isochrone({lat:43.604,lon:1.444}),s.isochrone({lat:43.604,lon:1.444})]);assert.equal(calls,1);assert.deepEqual(a,b);
 });
+
+test('Un événement est allégé sans perdre ses dates ni ses prochaines séances', async () => {
+  const { slimEvent } = await import('../lib/city-explore.mjs');
+  const sessions = Array.from({ length: 300 }, (_, i) => ({ begin: new Date(Date.UTC(2026, 9, 2 + i, 9)).toISOString(), end: new Date(Date.UTC(2026, 9, 2 + i, 18)).toISOString() }));
+  const long = 'mot '.repeat(600);
+  const p = { id: 'e', name: 'Exposition', start_date: '2026-10-02', end_date: '2027-07-28', description: long, details: [{ label: 'Conditions', value: long }, { label: 'Lieu', value: 'Musée' }], sessions };
+  const s = slimEvent(p);
+  assert.equal(s.sessions.length, 40);
+  assert.equal(s.sessions_total, 300);
+  assert.deepEqual(s.sessions[0], sessions[0], 'les PROCHAINES séances sont gardées, dans l’ordre');
+  assert.equal(s.start_date, '2026-10-02');
+  assert.equal(s.end_date, '2027-07-28', 'la fin de l’événement reste celle de la dernière séance, même retirée');
+  assert.ok(s.description.length <= 701 && s.description.endsWith('…'));
+  assert.ok(s.details[0].value.endsWith('…'));
+  assert.equal(s.details[1].value, 'Musée');
+  assert.equal(p.sessions.length, 300, 'l’original n’est pas modifié');
+  const court = { id: 'c', name: 'Concert', description: 'Un soir.', sessions: sessions.slice(0, 2) };
+  const t = slimEvent(court);
+  assert.equal(t.sessions.length, 2);
+  assert.equal(t.sessions_total, undefined);
+  assert.equal(t.description, 'Un soir.');
+});
