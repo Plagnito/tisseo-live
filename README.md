@@ -132,7 +132,8 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
 | `GET /api/tiles` | Fonds de carte **vérifiés** par le serveur (`?force=1` pour re-tester) |
 | `GET /api/departures?stop_id=…` | Prochains passages à un arrêt (temps réel) |
 | `GET /api/nearby?lat=…&lon=…&n=…` | Arrêts les plus proches + leurs passages |
-| `GET /api/journey?from=…&to=…` | Itinéraire A→B (nom d'arrêt, id ou `lat,lon`) |
+| `GET /api/journey?from=…&to=…` | Itinéraire A→B (nom d'arrêt, adresse, lieu, id ou `lat,lon`) ; `from_stop` / `from_lat`+`from_lon`+`from_label` pour un lieu déjà choisi ; `at=<epoch>` ; chaque étape porte son tracé (`path`), sa distance et ses arrêts — `trace=0` pour s'en passer |
+| `GET /api/places/suggest?q=…` | Suggestions au fil de la frappe : arrêts (avec leurs lignes), adresses et lieux à portée d'un arrêt |
 | `GET /api/status` | Santé : âge du flux, compteurs, véhicules recalés, erreurs amont |
 | `GET /api/auth/connexion` | Connexion par le compte Atlas (SSO, PKCE) ; `?app=android` revient dans l'application. Sous `/api/` comme le retour et l'accord des assistants : aucun service worker, même ancien, n'intercepte ce préfixe |
 | `/api/compte/…` | Trajets enregistrés, trajets planifiés, amis, partages, assistants autorisés — voir « Compte Atlas » |
@@ -175,6 +176,22 @@ port libre : `netsh interface ipv4 show excludedportrange protocol=tcp`.
 - **Inventaire.** Les compteurs « véhicules » et « lignes » ouvrent la liste
   de ce qui roule, avec la position de chaque véhicule. Un clic sur une ligne
   la filtre, la trace, et ouvre ses véhicules.
+ - **Le trajet entier, d'une adresse à une autre.** Les deux champs du
+   planificateur proposent arrêts, adresses et lieux pendant la frappe ; le lieu
+   choisi part avec ses coordonnées, pas avec son libellé. Le routeur n'entre plus
+   dans le réseau par *le* plus proche arrêt mais par tous ceux à portée de marche
+   (700 m, 14 au plus), de chaque côté — c'est lui qui choisit —, et sait répondre
+   « à pied » quand c'est plus court. Le résultat est dessiné **en entier** dès le
+   calcul : marches sur le vrai chemin piéton, lignes à leur couleur sur le tracé
+   emprunté, les deux bouts marqués A et B, carte cadrée sur l'ensemble. Cliquer
+   une étape s'en rapproche sans effacer le reste ; « Voir tout le trajet » recadre.
+   Contrôle : `npm run test:e2e:trajet-complet`.
+ - **Perturbations appliquées, pas seulement affichées.** Le flux ne structure
+   une alerte que par ligne ; les arrêts non desservis, le sens et les dates sont
+   dans son texte. `lib/perturbations.mjs` les en extrait : un arrêt fermé n'annonce
+   plus de passage (la fiche dit quelle ligne ne s'y arrête pas, et pourquoi), et
+   l'itinéraire ne monte, ne descend ni ne traverse là où la ligne est coupée — à
+   l'heure du trajet, pas à l'heure de la demande.
  - **Itinéraire A→B.** Dijkstra sur ~20 k états côté serveur (marche,
    correspondances, horaires temps réels appliqués segment par segment), tracé
    sur la carte dans le sens emprunté. Deux subtilités du réseau de Tisséo,
@@ -314,6 +331,13 @@ Ce qui rend les réponses fiables pour un modèle de langage :
   (la station de métro) et on nomme les autres ;
 - une adresse n'est retenue que si un arrêt Tisséo est à moins de 1,5 km : c'est ce qui
   écarte « 12 rue Alsace-Lorraine » à **Lavaur**, que le géocodeur classe en premier ;
+- **refuser plutôt que deviner** : « Paris Gare de Lyon » ou « Bordeaux Saint-Jean » ne
+  deviennent pas un sosie toulousain ; une saisie qui est le nom d'une **commune** rend son
+  centre si le réseau y passe (« Muret »), un refus motivé sinon (« Lavaur », à 32 km) —
+  jamais l'avenue de Toulouse qui porte ce nom. Ordre : arrêt de ce nom exact → commune
+  desservie → arrêt dont le nom commence ainsi → refus → adresse ou lieu géocodé ;
+- les **perturbations** comptent dans les réponses : passages retirés aux arrêts non
+  desservis (avec la raison), itinéraires qui contournent une coupure à l'heure du trajet ;
 - l'itinéraire écarte les lignes **hors service** à l'heure demandée (amplitude des
   horaires théoriques) et attend le prochain passage théorique quand le temps réel manque.
 
