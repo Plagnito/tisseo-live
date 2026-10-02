@@ -157,6 +157,12 @@ details.method p { margin: 8px 0 0; line-height: 1.5; }
   .planner > summary .ic { width: 20px; height: 20px; }
   .planner-form { gap: 8px; margin-top: 2px; }
   .planner-form input, #search { min-height: 46px; font-size: 16px; border-radius: 11px; padding: 8px 12px; }
+  .jsuggest li { min-height: 46px; padding: 6px 10px; }
+  .jsuggest .jst b { font-size: 15px; }
+  .jsuggest .jst small { font-size: 12.5px; }
+  .jwhen { font-size: 14px; }
+  .jtools .mini { min-height: 44px; flex: 1; justify-content: center; }
+  .jstops summary { min-height: 30px; display: flex; align-items: center; font-size: 12.5px; }
   .planner-actions .mini { min-height: 46px; font-size: 15px; }
   .planner-actions #jGo { flex: 3; font-weight: 700; }
   .planner-actions #jSwap, .planner-actions #jClose { flex: 0 0 46px; padding: 0; }

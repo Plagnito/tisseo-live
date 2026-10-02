@@ -41,10 +41,10 @@ __cssChain([
   'https://cdnjs.cloudflare.com/ajax/libs/leaflet.markercluster/1.5.3/MarkerCluster.Default.css'
 ]);
 </script>
-<link rel="stylesheet" href="styles.css?v=20261002-1.3.1">
-<link rel="stylesheet" href="city.css?v=20261002-1.3.1">
-<link rel="stylesheet" href="compte.css?v=20261002-1.3.1">
-<link rel="stylesheet" href="mobile.css?v=20261002-1.3.1">
+<link rel="stylesheet" href="styles.css?v=20261002-1.4.0">
+<link rel="stylesheet" href="city.css?v=20261002-1.4.0">
+<link rel="stylesheet" href="compte.css?v=20261002-1.4.0">
+<link rel="stylesheet" href="mobile.css?v=20261002-1.4.0">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 </head>
 <body>
@@ -77,8 +77,9 @@ __cssChain([
       <details class="planner" id="planner">
         <summary data-ic="route">Itinéraire</summary>
         <div class="planner-form">
-          <input id="jFrom" type="search" placeholder="De : Capitole, une adresse…" autocomplete="off">
-          <input id="jTo" type="search" placeholder="À : Jean Jaurès, une adresse…" autocomplete="off">
+          <input id="jFrom" type="search" placeholder="De : un arrêt, une adresse, un lieu…" autocomplete="off">
+          <input id="jTo" type="search" placeholder="À : un arrêt, une adresse, un lieu…" autocomplete="off">
+          <label class="jwhen" for="jAt"><span data-ic="clock"></span><span class="jwhen-t">Départ</span><input id="jAt" type="datetime-local" aria-label="Heure de départ (vide : maintenant)" title="Vide : départ maintenant"></label>
           <div class="planner-actions">
             <button id="jGo" class="mini on">Calculer</button>
             <button id="jSwap" class="mini" data-ic="swap" title="Inverser départ et arrivée" aria-label="Inverser départ et arrivée"></button>
@@ -194,11 +195,11 @@ __cssChain([
   window.IT = IT;
   window.dispatchEvent(new Event('tisseo:lib'));
 </script>
-<script src="art.js?v=20261002-1.3.1"></script>
-<script src="app.js?v=20261002-1.3.1"></script>
-<script src="city.js?v=20261002-1.3.1"></script>
-<script src="compte.js?v=20261002-1.3.1"></script>
-<script src="mobile.js?v=20261002-1.3.1"></script>
-<script type="module" src="walking.js?v=20261002-1.3.1"></script>
+<script src="art.js?v=20261002-1.4.0"></script>
+<script src="app.js?v=20261002-1.4.0"></script>
+<script src="city.js?v=20261002-1.4.0"></script>
+<script src="compte.js?v=20261002-1.4.0"></script>
+<script src="mobile.js?v=20261002-1.4.0"></script>
+<script type="module" src="walking.js?v=20261002-1.4.0"></script>
 </body>
 </html>

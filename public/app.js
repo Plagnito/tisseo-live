@@ -18,6 +18,7 @@ const state = {
   selectedId: null, // clé véhicule
   selectedStop: null, // { id, name, lat, lon }
   stopDeps: [],
+  stopClosed: [], // lignes qui ne desservent pas l'arrêt sélectionné (perturbation)
   stopResults: [], // résultats de /api/stops/search
   stopFavs: readJson('tisseo.live.stops', []), // [{ id, name, lat, lon }]
   notifyStops: new Set(readJson('tisseo.live.notify', [])), // arrêts à surveiller
@@ -366,6 +367,7 @@ async function loadDepartures(stopId, silent) {
     if (!r.ok) throw new Error('départs ' + r.status);
     const j = await r.json();
     state.stopDeps = j.departures;
+    state.stopClosed = j.closed || [];
     state.rtTimestamp = j.rt_timestamp;
     if (!silent) renderDetail();
   } catch (e) { if (!silent) toast('Prochains passages indisponibles.'); }
@@ -1021,37 +1023,64 @@ $('lineList').addEventListener('click', onLineListClick);
 
 // ---------- itinéraire A → B ----------------------------------------------
 // Le calcul est fait côté serveur (Dijkstra sur ~20 k états, marche,
-// correspondances, horaires temps réels appliqués segment par segment).
-// L'interface se contente de le formater et de le dessiner.
+// correspondances, horaires temps réels appliqués segment par segment), qui
+// rend aussi le TRACÉ de chaque étape : tout le trajet se dessine d'un coup,
+// de la porte de départ à la porte d'arrivée.
 const journeyLayer = L.layerGroup().addTo(map);
 let journey = null;
+// Lieu CHOISI dans les suggestions, par champ : { text, stop } ou { text, lat,
+// lon, label }. Tant que le texte du champ n'a pas changé, c'est lui qu'on
+// envoie — pas le texte, que le serveur devrait re-deviner.
+const journeyPick = { jFrom: null, jTo: null };
 
 // Une étape d'itinéraire en frise : à gauche les heures, au milieu un rail (à la
 // couleur de la ligne, ou en pointillés à pied), à droite ce qu'on fait. Le
 // balisage garde ce dont le reste dépend : `li.jleg[data-leg]`, `b .dline`, `.jtime`.
 const artIcon = (nom) => (window.Art ? window.Art.icon(nom) : '');
 const modeIcon = (mode) => { const m = String(mode || '').toLowerCase(); return m.includes('métro') || m.includes('metro') ? 'metro' : m.includes('tram') ? 'tram' : m.includes('téléo') || m.includes('teleo') ? 'cable' : 'bus'; };
-function journeyLegHtml(leg) {
+const metres = (m) => (m == null ? '' : m < 1000 ? `${Math.max(10, Math.round(m / 10) * 10)} m` : `${(m / 1000).toFixed(1).replace('.', ',')} km`);
+function journeyLegHtml(leg, i) {
   if (leg.type === 'walk') {
     const min = Math.max(1, Math.round(leg.seconds / 60));
     const change = leg.from === leg.to;
-    return `<li class="jleg walk"><span class="jrail" aria-hidden="true"></span><div class="jbody">` +
-      `<b>${artIcon('walk')} ${change ? `Correspondance · ${min} min` : `${min} min à pied`}</b>` +
+    return `<li class="jleg walk" data-step="${i}"><span class="jrail" aria-hidden="true"></span><div class="jbody">` +
+      `<b>${artIcon('walk')} ${change ? `Correspondance · ${min} min` : `${min} min à pied`}` +
+      `${!change && leg.distance_m ? `<span class="jdist">· ${metres(leg.distance_m)}</span>` : ''}</b>` +
       `<span>${change ? escapeHtml(leg.to) : `${escapeHtml(leg.from)} → ${escapeHtml(leg.to)}`}</span></div></li>`;
   }
+  // « Correspondance » : seulement s'il y a eu un véhicule avant celui-ci.
+  const correspondance = (journey?.legs || []).slice(0, i).some((l) => l.type === 'ride');
   const dep = leg.depart ? fmtTime(leg.depart) : '';
   const arr = leg.arrive ? fmtTime(leg.arrive) : '';
-  return `<li class="jleg ride" style="--lc:#${escapeHtml(leg.color)}" data-leg="${escapeHtml(leg.route_id)}" data-from="${escapeHtml(leg.from_id)}" data-to="${escapeHtml(leg.to_id)}">` +
+  // Arrêts traversés, repliés : « 6 arrêts » se déplie en liste.
+  const entre = (leg.stops || []).slice(1, -1);
+  const arrets = leg.stops?.length > 1
+    ? `<details class="jstops"><summary>${leg.stops.length - 1} arrêt${leg.stops.length > 2 ? 's' : ''}${leg.headsign ? ` · direction ${escapeHtml(leg.headsign)}` : ''}</summary>` +
+      (entre.length ? `<ol>${entre.map((s) => `<li>${escapeHtml(s.name)}</li>`).join('')}</ol>` : '') + '</details>'
+    : '';
+  return `<li class="jleg ride" style="--lc:#${escapeHtml(leg.color)}" data-step="${i}" data-leg="${escapeHtml(leg.route_id)}" data-from="${escapeHtml(leg.from_id)}" data-to="${escapeHtml(leg.to_id)}">` +
     `<span class="jrail" aria-hidden="true"></span><div class="jbody">` +
     `<div class="jstop"><time>${dep}</time><strong>${escapeHtml(leg.from)}</strong></div>` +
     `<b><span class="dline" style="background:#${leg.color};color:#${leg.text_color}">${escapeHtml(leg.line)}</span>${artIcon(modeIcon(leg.mode))}<span class="jmode">${escapeHtml(leg.mode || '')}${leg.seconds ? ` · ${Math.max(1, Math.round(leg.seconds / 60))} min` : ''}</span></b>` +
-    `<span class="jtime">${leg.real ? 'temps réel' : '<em>estimé</em>'}` +
-    `${leg.transfer_s ? ` <em>+${Math.round(leg.transfer_s / 60)} min de correspondance</em>` : ''}</span>` +
+    `<span class="jtime">${leg.no_departure ? '<em>aucun départ connu</em>' : leg.real ? 'temps réel' : leg.scheduled ? 'horaire théorique' : '<em>estimé</em>'}` +
+    `${leg.transfer_s && correspondance ? ` <em>+${Math.round(leg.transfer_s / 60)} min de correspondance</em>` : ''}</span>` +
+    arrets +
     `<div class="jstop"><time>${arr}</time><strong>${escapeHtml(leg.to)}</strong></div></div></li>`;
+}
+
+// Sur téléphone, la poignée de la feuille dit le trajet en cours : la carte
+// montre le tracé, la poignée rappelle la durée et ouvre les étapes.
+function journeyHandleLabel() {
+  const el = $('sidebarToggleLabel');
+  if (!el || window.cityView?.active) return;
+  el.textContent = journey && !journey.error && journey.arrive_at
+    ? `${Math.max(1, Math.round((journey.duration_s || 0) / 60))} min · arrivée ${fmtTime(journey.arrive_at)} · voir les étapes`
+    : 'Itinéraire, lignes, compte';
 }
 
 function renderJourney() {
   const box = $('jResults');
+  journeyHandleLabel();
   if (!journey) { box.innerHTML = ''; return; }
   if (journey.error) {
     setHtml(box, `<div class="jerr">${escapeHtml(journey.error)}${journey.hint ? '<br><small>' + escapeHtml(journey.hint) + '</small>' : ''}</div>`);
@@ -1068,20 +1097,108 @@ function renderJourney() {
       ? 'hors service maintenant : ' + l.map((r) => r.line).join(', ')
       : 'aucune ligne ne circule à cette heure — trajet théorique');
   }
+  if (journey.no_departure) warnings.push('une étape n’a aucun départ connu : heures indicatives');
+  // Perturbations des lignes empruntées : le calcul en a déjà tenu compte.
+  for (const d of (journey.disruptions || []).slice(0, 3)) {
+    warnings.push(`ligne ${d.line} perturbée (${d.kind === 'ligne' ? 'suspendue' : d.kind === 'coupure' ? 'coupée sur un tronçon' : 'arrêts non desservis'}) — trajet calculé en l’évitant`);
+  }
+  const corresp = journey.walk_only ? ' · à pied' : journey.transfers ? ` · ${journey.transfers} correspondance${journey.transfers > 1 ? 's' : ''}` : ' · direct';
+  const od = journey.origin?.label && journey.destination?.label
+    ? `<div class="jod"><span>${escapeHtml(journey.origin.label)}</span><i aria-hidden="true">→</i><span>${escapeHtml(journey.destination.label)}</span></div>` : '';
   setHtml(box,
-    `<div class="jhead"><b>${Math.round((journey.duration_s || 0) / 60)} min</b>` +
-    `<span>départ ${fmtTime(journey.depart_at)} · arrivée ${fmtTime(journey.arrive_at)}` +
-    `${journey.transfers ? ` · ${journey.transfers} correspondance${journey.transfers > 1 ? 's' : ''}` : ' · direct'}</span></div>` +
+    od +
+    `<div class="jhead"><b>${Math.max(1, Math.round((journey.duration_s || 0) / 60))} min</b>` +
+    `<span>départ ${fmtTime(journey.depart_at)} · arrivée ${fmtTime(journey.arrive_at)}${corresp}` +
+    `${journey.walk_m && !journey.walk_only ? ` · ${metres(journey.walk_m)} à pied` : ''}</span></div>` +
     (warnings.length ? `<div class="jwarn">${warnings.map((w) => `<span>${artIcon('alert')}${escapeHtml(w)}</span>`).join('')}</div>` : '') +
-    `<ol class="jlegs">${legs.map(journeyLegHtml).join('')}</ol>`);
-  box.querySelectorAll('li.jleg[data-leg]').forEach((li) => {
-    li.onclick = () => focusJourneyLeg(li.dataset.leg, li.dataset.from, li.dataset.to);
+    `<ol class="jlegs">${legs.map(journeyLegHtml).join('')}</ol>` +
+    `<div class="jtools"><button class="mini" id="jShowAll">${artIcon('fit')}Voir tout le trajet</button></div>`);
+  box.querySelectorAll('li.jleg[data-step]').forEach((li) => {
+    li.onclick = (e) => {
+      // Déplier la liste des arrêts ne recadre pas la carte.
+      if (e.target.closest('.jstops')) return;
+      focusJourneyStep(Number(li.dataset.step));
+    };
   });
+  $('jShowAll').onclick = () => { drawJourney(journey); fitJourney(journey); $('sidebar').classList.remove('open'); };
 }
 
-// Dessine un trajet : on va chercher le vrai tracé de la ligne dans le sens
-// emprunté (from_id → to_id), pas une corde entre les deux arrêts.
+// Dessine TOUT le trajet : marche en pointillés, lignes à leur couleur, arrêts
+// traversés, et les deux bouts. `focus` = étape mise en avant (les autres pâlissent).
+function drawJourney(j, focus = null) {
+  journeyLayer.clearLayers();
+  if (!j?.legs) return [];
+  // className : les tracés du réseau sont chargés en arrière-plan même quand
+  // les tuiles s'affichent, donc « compter tous les paths du calque » ne
+  // permet plus de savoir si un itinéraire est affiché.
+  const trait = (o) => ({ lineCap: 'round', lineJoin: 'round', className: 'tr journey', ...o });
+  const tous = [];
+  j.legs.forEach((leg, i) => {
+    const pts = leg.path;
+    if (!pts || pts.length < 2) return;
+    tous.push(...pts);
+    const pale = focus != null && focus !== i;
+    if (leg.type === 'walk') {
+      L.polyline(pts, trait({ color: '#ffffff', weight: 7, opacity: pale ? .2 : .75 })).addTo(journeyLayer);
+      L.polyline(pts, trait({ color: '#2f7df6', weight: 4, opacity: pale ? .35 : 1, dashArray: '1 9', className: 'tr journey walk' })).addTo(journeyLayer);
+      return;
+    }
+    const color = '#' + (leg.color || 'dc006b');
+    L.polyline(pts, trait({ color: '#000', weight: 11, opacity: pale ? .12 : .35 })).addTo(journeyLayer);
+    L.polyline(pts, trait({ color: '#fff', weight: 8, opacity: pale ? .3 : .85 })).addTo(journeyLayer);
+    L.polyline(pts, trait({ color, weight: 5, opacity: pale ? .4 : 1 })).addTo(journeyLayer);
+    (leg.stops || []).forEach((s, k, a) => {
+      const bout = k === 0 || k === a.length - 1;
+      const heure = k === 0 ? leg.depart : k === a.length - 1 ? leg.arrive : null;
+      L.circleMarker([s.lat, s.lon], trait(bout
+        ? { radius: 7, color: '#fff', weight: 3, fillColor: color, fillOpacity: pale ? .5 : 1, opacity: pale ? .5 : 1 }
+        : { radius: 3.5, color: '#fff', weight: 1.5, fillColor: color, fillOpacity: pale ? .35 : .9, opacity: pale ? .4 : 1 }))
+        .bindTooltip(`${escapeHtml(s.name)}${heure ? ` · ${fmtTime(heure)}` : ''}${bout ? ` · ${escapeHtml(leg.line)}` : ''}`, { direction: 'top', className: 'bus-tip' })
+        .addTo(journeyLayer);
+    });
+  });
+  // Les deux bouts du trajet : A et B, toujours visibles.
+  const avecTrace = j.legs.filter((l) => l.path?.length >= 2);
+  if (avecTrace.length) {
+    const a = avecTrace[0].path[0], b = avecTrace[avecTrace.length - 1].path.at(-1);
+    const bout = (lettre, classe) => L.divIcon({ className: '', html: `<div class="jend ${classe}">${lettre}</div>`, iconSize: [26, 26], iconAnchor: [13, 13] });
+    L.marker(a, { icon: bout('A', 'a'), keyboard: false, zIndexOffset: 900 }).bindTooltip(escapeHtml(j.origin?.label || 'Départ'), { direction: 'top', className: 'bus-tip' }).addTo(journeyLayer);
+    L.marker(b, { icon: bout('B', 'b'), keyboard: false, zIndexOffset: 900 }).bindTooltip(escapeHtml(j.destination?.label || 'Arrivée'), { direction: 'top', className: 'bus-tip' }).addTo(journeyLayer);
+  }
+  return tous;
+}
+
+function fitJourney(j, pts = null) {
+  const liste = pts ?? (j?.legs || []).flatMap((l) => l.path || []);
+  if (liste.length < 2) return;
+  // `flyToBounds` calcule une trajectoire à partir de la taille de la carte :
+  // sur une carte de taille nulle (volet masqué), il lève une erreur.
+  const bornes = L.latLngBounds(liste).pad(0.14);
+  try {
+    if (map.getSize().x > 0 && map.getSize().y > 0) map.flyToBounds(bornes, { duration: 0.7, maxZoom: 17 });
+    else map.fitBounds(bornes, { animate: false, maxZoom: 17 });
+  } catch { map.fitBounds(bornes, { animate: false, maxZoom: 17 }); }
+}
+
+// Met une étape en avant : le reste du trajet reste dessiné, en plus pâle.
+function focusJourneyStep(i) {
+  const leg = journey?.legs?.[i];
+  if (!leg) return;
+  if (leg.path?.length >= 2) {
+    drawJourney(journey, i);
+    fitJourney(journey, leg.path);
+    return;
+  }
+  // Réponse sans tracé (ancienne copie gardée hors ligne) : on retombe sur le
+  // tracé de la ligne, comme avant.
+  if (leg.type === 'ride') focusJourneyLeg(leg.route_id, leg.from_id, leg.to_id);
+}
+
+// Dessine un trajet en véhicule à partir du tracé de la ligne (chemin d'avant,
+// gardé pour une réponse sans tracé et pour les appels existants).
 async function focusJourneyLeg(routeId, fromId, toId) {
+  const i = (journey?.legs || []).findIndex((l) => l.type === 'ride' && l.route_id === routeId && l.from_id === fromId && l.to_id === toId);
+  if (i >= 0 && journey.legs[i].path?.length >= 2) { focusJourneyStep(i); return; }
   journeyLayer.clearLayers();
   if (!routeId || routeId === 'walk') return;
   try {
@@ -1093,9 +1210,6 @@ async function focusJourneyLeg(routeId, fromId, toId) {
     if (!variant) return;
     const color = '#' + (routeById.get(routeId)?.color || 'dc006b');
     const latlngs = variant.shape.map(([la, lo]) => [la, lo]);
-    // className : les tracés du réseau sont chargés en arrière-plan même quand
-    // les tuiles s'affichent, donc « compter tous les paths du calque » ne
-    // permet plus de savoir si un itinéraire est affiché.
     const trait = (o) => ({ lineCap: 'round', className: 'tr journey', ...o });
     L.polyline(latlngs, trait({ color: '#000', weight: 11, opacity: .35 })).addTo(journeyLayer);
     L.polyline(latlngs, trait({ color: '#fff', weight: 8, opacity: .8 })).addTo(journeyLayer);
@@ -1113,34 +1227,151 @@ async function focusJourneyLeg(routeId, fromId, toId) {
   } catch (e) { toast('Tracé de la ligne indisponible.'); }
 }
 
+// Affiche un itinéraire calculé : la liste des étapes ET tout le trajet sur la carte.
+function showJourney(j) {
+  journey = j?.error ? { error: j.error, hint: j.hint } : j;
+  renderJourney();
+  journeyLayer.clearLayers();
+  if (!journey || journey.error) return;
+  const pts = drawJourney(journey);
+  if (pts.length) fitJourney(journey, pts);
+  else {
+    const ride = (journey.legs || []).find((l) => l.type === 'ride');
+    if (ride) focusJourneyLeg(ride.route_id, ride.from_id, ride.to_id);
+  }
+}
+
 async function askJourney() {
-  const from = $('jFrom').value.trim();
-  const to = $('jTo').value.trim();
-  if (!from || !to) { toast('Indiquez un départ et une arrivée.'); return; }
-  setHtml($('jResults'), '<div class="jerr">Calcul en cours…</div>');
+  const q = new URLSearchParams();
+  for (const [cote, id] of [['from', 'jFrom'], ['to', 'jTo']]) {
+    const texte = $(id).value.trim();
+    if (!texte) { toast('Indiquez un départ et une arrivée.'); $(id).focus(); return; }
+    const choix = journeyPick[id];
+    if (choix && choix.text === texte) {
+      if (choix.stop) q.set(`${cote}_stop`, choix.stop);
+      else { q.set(`${cote}_lat`, choix.lat); q.set(`${cote}_lon`, choix.lon); q.set(`${cote}_label`, choix.label); }
+    } else q.set(cote, texte);
+  }
+  // Heure de départ choisie (vide : maintenant).
+  const quand = $('jAt')?.value;
+  if (quand) { const t = Math.floor(new Date(quand).getTime() / 1000); if (Number.isFinite(t)) q.set('at', t); }
+  setHtml($('jResults'), '<div class="jerr jwait">Calcul en cours…</div>');
   $('planner').open = true;
   try {
-    const r = await fetch(`/api/journey?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
-    const j = await r.json();
-    journey = j.error ? { error: j.error, hint: j.hint } : j;
-    renderJourney();
-    journeyLayer.clearLayers();
-    if (!j.error) {
-      // On dessine d'emblée le premier trajet emprunté : l'utilisateur voit
-      // où on l'emmène avant même de cliquer une étape.
-      const ride = (j.legs || []).find((l) => l.type === 'ride');
-      if (ride) focusJourneyLeg(ride.route_id, ride.from_id, ride.to_id);
-    }
+    const r = await fetch(`/api/journey?${q}`);
+    showJourney(await r.json());
   } catch (e) {
     journey = { error: 'Calcul indisponible (' + e.message + ')' };
     renderJourney();
   }
 }
 
+// --- suggestions pendant la saisie ------------------------------------------
+// Arrêts du réseau, adresses et lieux toulousains : on choisit dans la liste au
+// lieu d'espérer que le texte soit compris. Flèches, Entrée, Échap ; au doigt,
+// un appui.
+let pointerHeld = false;
+document.addEventListener('pointerdown', () => { pointerHeld = true; }, true);
+for (const fin of ['pointerup', 'pointercancel']) document.addEventListener(fin, () => { pointerHeld = false; }, true);
+function attachSuggest(input) {
+  const list = document.createElement('ul');
+  list.className = 'jsuggest hidden';
+  list.id = `${input.id}Suggest`;
+  list.setAttribute('role', 'listbox');
+  input.setAttribute('role', 'combobox');
+  input.setAttribute('aria-autocomplete', 'list');
+  input.setAttribute('aria-controls', list.id);
+  input.setAttribute('aria-expanded', 'false');
+  input.after(list);
+  let timer = null, token = 0, items = [], active = -1;
+
+  const close = () => { list.classList.add('hidden'); input.setAttribute('aria-expanded', 'false'); active = -1; };
+  const render = () => {
+    if (!items.length) { close(); return; }
+    list.innerHTML = items.map((it, i) => `<li role="option" data-i="${i}" class="${i === active ? 'on' : ''}" aria-selected="${i === active}">` +
+      `<span class="jsi">${artIcon(it.icon)}</span><span class="jst"><b>${escapeHtml(it.title)}</b>${it.sub ? `<small>${escapeHtml(it.sub)}</small>` : ''}</span></li>`).join('');
+    list.classList.remove('hidden');
+    input.setAttribute('aria-expanded', 'true');
+  };
+  const ici = () => (navigator.geolocation ? [{ icon: 'position', title: 'Ma position', sub: 'là où je suis', geo: true }] : []);
+  const choose = (it) => {
+    close();
+    if (it.geo) {
+      input.value = 'Localisation…';
+      navigator.geolocation.getCurrentPosition((pos) => {
+        const lat = +pos.coords.latitude.toFixed(5), lon = +pos.coords.longitude.toFixed(5);
+        input.value = 'Ma position';
+        journeyPick[input.id] = { text: 'Ma position', lat, lon, label: 'Ma position' };
+      }, () => { input.value = ''; toast('Position refusée ou indisponible.'); }, { timeout: 10000 });
+      return;
+    }
+    input.value = it.title;
+    journeyPick[input.id] = it.stop ? { text: it.title, stop: it.stop } : { text: it.title, lat: it.lat, lon: it.lon, label: it.title };
+    // Départ choisi : on passe à l'arrivée ; arrivée choisie avec un départ : on calcule.
+    if (input.id === 'jFrom' && !$('jTo').value.trim()) $('jTo').focus();
+    else if ($('jFrom').value.trim() && $('jTo').value.trim()) askJourney();
+  };
+  const search = () => {
+    const q = input.value.trim();
+    if (q.length < 2) { items = q ? [] : ici(); active = -1; render(); return; }
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const mine = ++token;
+      try {
+        const r = await fetch('/api/places/suggest?q=' + encodeURIComponent(q));
+        if (!r.ok) throw new Error(String(r.status));
+        const j = await r.json();
+        if (mine !== token || input.value.trim() !== q) return; // réponse périmée
+        items = [
+          ...(j.stops || []).map((s) => ({ icon: 'stop', title: s.name, sub: s.lines?.length ? `Arrêt · ${s.lines.join(', ')}` : 'Arrêt', stop: s.id })),
+          ...(j.places || []).map((p) => ({ icon: p.type === 'poi' ? 'pin' : 'building', title: p.label, sub: p.type === 'poi' ? 'Lieu' : p.kind === 'housenumber' ? 'Adresse' : 'Rue', lat: p.lat, lon: p.lon })),
+        ];
+        active = -1;
+        if (document.activeElement === input) render();
+      } catch { /* suggestions indisponibles : la saisie libre reste possible */ }
+    }, 220);
+  };
+  input.addEventListener('input', () => { journeyPick[input.id] = null; search(); });
+  input.addEventListener('focus', () => { if (!input.value.trim()) { items = ici(); render(); } });
+  // La liste est dans le flux : en se refermant, elle remonte tout ce qui la
+  // suit. Si elle se fermait dès que le champ perd le focus, le bouton
+  // « Calculer » se déroberait sous le doigt entre l'appui et le relâchement.
+  // Elle attend donc la fin du geste en cours.
+  input.addEventListener('blur', () => {
+    if (!pointerHeld) { close(); return; }
+    const apres = () => { document.removeEventListener('pointerup', apres, true); document.removeEventListener('pointercancel', apres, true); setTimeout(close, 40); };
+    document.addEventListener('pointerup', apres, true);
+    document.addEventListener('pointercancel', apres, true);
+  });
+  input.addEventListener('keydown', (e) => {
+    const ouvert = !list.classList.contains('hidden');
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!ouvert || !items.length) return;
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+      render();
+    } else if (e.key === 'Enter' && ouvert && active >= 0) {
+      // La liste répond : Entrée choisit, et ne lance pas le calcul sur un texte à moitié tapé.
+      e.preventDefault(); e.stopPropagation();
+      choose(items[active]);
+    } else if (e.key === 'Escape' && ouvert) { e.stopPropagation(); close(); }
+  });
+  // mousedown (et non click) : le champ ne perd pas le focus avant le choix.
+  list.addEventListener('mousedown', (e) => {
+    const li = e.target.closest('li[data-i]');
+    if (!li) return;
+    e.preventDefault();
+    choose(items[Number(li.dataset.i)]);
+  });
+}
+attachSuggest($('jFrom'));
+attachSuggest($('jTo'));
+
 $('jGo').onclick = askJourney;
 $('jSwap').onclick = () => {
   const a = $('jFrom').value, b = $('jTo').value;
   $('jFrom').value = b; $('jTo').value = a;
+  [journeyPick.jFrom, journeyPick.jTo] = [journeyPick.jTo, journeyPick.jFrom];
   if (journey && !journey.error) askJourney();
 };
 $('jClose').onclick = () => { journey = null; journeyLayer.clearLayers(); renderJourney(); };
@@ -1406,7 +1637,12 @@ function renderDetail() {
       `<h3>🚏 ${escapeHtml(s.name)}` +
       `<button id="dFav" class="fav ${fav ? 'on' : ''}" title="Arrêt favori">${fav ? '★' : '☆'}</button>` +
       `<button id="dNotify" class="bell" data-notify="${escapeHtml(s.id)}" title="Être prévenu avant chaque passage">🔕</button></h3>`;
-    if (!state.stopDeps.length) html += '<div class="nodep">Aucun passage dans les 2 prochaines heures.</div>';
+    // Perturbation : des lignes ne s'arrêtent pas ici en ce moment. Leurs
+    // passages ne sont pas annoncés — et l'on dit pourquoi.
+    for (const c of (state.stopClosed || []).slice(0, 4)) {
+      html += `<div class="stopclosed">${artIcon('alert')}<span><b>${escapeHtml(c.line)}</b> ${c.whole_line ? 'ne circule pas' : 'ne dessert pas cet arrêt'} en ce moment${c.url ? ` — <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">${escapeHtml(c.title || 'info trafic')}</a>` : c.title ? ` — ${escapeHtml(c.title)}` : ''}</span></div>`;
+    }
+    if (!state.stopDeps.length) html += `<div class="nodep">${(state.stopClosed || []).length ? 'Aucun autre passage dans les 2 prochaines heures.' : 'Aucun passage dans les 2 prochaines heures.'}</div>`;
     for (const d of state.stopDeps.slice(0, 10)) html += depHtml(d);
     setHtml(box, html);
     box.classList.remove('hidden');
@@ -1624,7 +1860,7 @@ function connectStream() {
 
 // PWA : mise en cache du shell applicatif
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-  navigator.serviceWorker.register('sw.js?v=20261002-1.3.1', { updateViaCache: 'none' }).catch(() => {});
+  navigator.serviceWorker.register('sw.js?v=20261002-1.4.0', { updateViaCache: 'none' }).catch(() => {});
 }
 
 // deep link ?ligne=L1 (nom court ou route_id)

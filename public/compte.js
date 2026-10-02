@@ -462,12 +462,8 @@
     setHtml($('jResults'), '<div class="jerr">Calcul en cours…</div>');
     $('planner').scrollIntoView({ block: 'nearest' });
     try {
-      const j = await (await fetch(`/api/journey?${q}`)).json();
-      journey = j.error ? { error: j.error, hint: j.hint } : j;
-      renderJourney();
-      journeyLayer.clearLayers();
-      const ride = (j.legs || []).find((x) => x.type === 'ride');
-      if (!j.error && ride) focusJourneyLeg(ride.route_id, ride.from_id, ride.to_id);
+      // Même affichage qu'un itinéraire tapé à la main : étapes et trajet entier sur la carte.
+      showJourney(await (await fetch(`/api/journey?${q}`)).json());
     } catch (e) {
       journey = { error: `Calcul indisponible (${e.message})` };
       renderJourney();

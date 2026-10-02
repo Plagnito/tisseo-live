@@ -64,7 +64,8 @@ console.log(`serveur de test sur le port ${PORT}, horloge forcée à ${new Date(
 const api = await (await fetch(URL + 'api/vehicles')).json();
 const theo = api.vehicles.filter((v) => v.theoretical);
 ok(theo.length > 0, `rames théoriques dans /api/vehicles (${theo.length})`);
-ok(theo.every((v) => v.mode === 'Métro'), 'elles sont toutes du métro');
+// Le Téléo n'a pas plus de position temps réel que le métro : ses cabines sont théoriques aussi.
+ok(theo.every((v) => v.mode === 'Métro' || v.mode === 'Téléo'), `elles sont toutes du métro ou du Téléo (${[...new Set(theo.map((v) => v.mode))].join(', ')})`);
 ok(theo.filter((v) => v.on_route).length / theo.length > 0.9,
   `poser sur le tracé (${theo.filter((v) => v.on_route).length}/${theo.length} ; le reste n'a pas de tracé exploitable)`);
 ok(theo.every((v) => v.remaining?.length), 'chacune liste ses arrêts restants');

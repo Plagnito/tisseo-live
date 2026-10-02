@@ -204,6 +204,48 @@ body {
 .jleg .jtime { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .jleg .jtime em { font-style: normal; color: #ffc46b; }
 
+/* --- planificateur : suggestions, heure, trajet complet --- */
+.planner-form { position: relative; }
+.jsuggest {
+  list-style: none; margin: -2px 0 0; padding: 4px; max-height: 280px; overflow-y: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0,0,0,.35);
+}
+.jsuggest li { display: flex; align-items: center; gap: 9px; padding: 7px 8px; border-radius: 7px; cursor: pointer; }
+.jsuggest li.on, .jsuggest li:hover { background: var(--panel2); }
+.jsuggest .jsi { flex: none; width: 18px; height: 18px; color: var(--accent); display: inline-flex; }
+.jsuggest .jsi .ic { width: 18px; height: 18px; }
+.jsuggest .jst { min-width: 0; display: flex; flex-direction: column; }
+.jsuggest .jst b { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jsuggest .jst small { font-size: 11px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jwhen { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+.jwhen .ic { width: 16px; height: 16px; }
+.jwhen input { flex: 1; min-width: 0; color-scheme: dark; }
+.jod { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin-bottom: 4px; min-width: 0; }
+.jod span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jod i { flex: none; font-style: normal; opacity: .7; }
+.jdist { font-weight: 400; color: var(--muted); }
+.jstops { font-size: 11.5px; color: var(--muted); }
+.jstops summary { cursor: pointer; padding: 2px 0; }
+.jstops ol { margin: 2px 0 4px; padding-left: 16px; }
+.jtools { margin-top: 8px; display: flex; gap: 6px; }
+.jtools .mini { display: inline-flex; align-items: center; gap: 6px; }
+.jtools .ic { width: 15px; height: 15px; }
+.jwait::before { content: ''; display: inline-block; width: 11px; height: 11px; margin-right: 7px; vertical-align: -1px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: jspin .8s linear infinite; }
+@keyframes jspin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .jwait::before { animation: none; } }
+/* Les deux bouts du trajet sur la carte. */
+.jend {
+  width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  font: 800 13px/1 system-ui, sans-serif; color: #fff; border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0,0,0,.55);
+}
+.jend.a { background: #1f9d55; }
+.jend.b { background: #dc006b; }
+/* Arrêt non desservi (perturbation), dans la fiche d'un arrêt. */
+.stopclosed { display: flex; gap: 7px; align-items: flex-start; font-size: 12px; color: #ffc46b; background: rgba(255,159,10,.12); border-radius: 8px; padding: 6px 8px; margin: 4px 0; }
+.stopclosed .ic { flex: none; width: 15px; height: 15px; margin-top: 1px; }
+.stopclosed a { color: inherit; }
+
 /* Ligne perturbée : halo d'alerte, visible même sur fond clair. */
 .pill.alert { box-shadow: 0 0 0 2px #ff9f0a, 0 2px 8px rgba(0,0,0,.6); }
 .pill.alert::before {

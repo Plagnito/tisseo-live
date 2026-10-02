@@ -153,6 +153,8 @@
   function setActive(value, { persist = true } = {}) {
     active = Boolean(value);
     $('sidebarToggleLabel').textContent = active ? 'Explorer & réglages' : 'Itinéraire, lignes, compte';
+    // Un itinéraire affiché reprend la poignée (durée, heure d'arrivée).
+    if (!active && typeof journeyHandleLabel === 'function') journeyHandleLabel();
     document.body.classList.toggle('city-view', active);
     for (const id of ['cityPanel', 'cityHeader', 'cityMapNote']) $(id).classList.toggle('hidden', !active);
     for (const id of ['transportPanel', 'transportStats', 'liveBadge', 'btnMap']) $(id).classList.toggle('hidden', active);

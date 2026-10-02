@@ -185,3 +185,80 @@ test('l\'attente reste bornée par le mode du véhicule', () => {
     }
   }
 });
+
+// --- départ ou arrivée à une ADRESSE ----------------------------------------------
+// Réseau fabriqué : un métro rapide dont la station est à 450 m de l'adresse, et
+// un bus lent dont l'arrêt est à 100 m. Les deux arrêts sont à 550 m l'un de
+// l'autre : trop loin pour qu'on passe de l'un à l'autre « en correspondance ».
+{
+  const kLon = 1 / (111_320 * Math.cos((43.6 * Math.PI) / 180)); // degrés de longitude par mètre
+  const O = { lat: 43.6, lon: 1.44 };
+  const S = {
+    BA: { n: 'Bus Départ', lat: 43.6, lon: 1.44 - 100 * kLon },
+    MA: { n: 'Métro Départ', lat: 43.6, lon: 1.44 + 450 * kLon },
+    BB: { n: 'Bus Arrivée', lat: 43.63, lon: 1.44 - 100 * kLon },
+    MB: { n: 'Métro Arrivée', lat: 43.63, lon: 1.44 + 450 * kLon },
+  };
+  const R = [{ route_id: 'M', short_name: 'M', type: '1' }, { route_id: 'B', short_name: 'B', type: '3' }];
+  const V = {
+    M: [{ dir: '0', headsign: 'Métro Arrivée', stops: ['MA', 'MB'], shape: [[S.MA.lat, S.MA.lon], [S.MB.lat, S.MB.lon]] }],
+    B: [{ dir: '0', headsign: 'Bus Arrivée', stops: ['BA', 'BB'], shape: [[S.BA.lat, S.BA.lon], [S.BB.lat, S.BB.lon]] }],
+  };
+  const r2 = createRouter({ stops: S, variants: V, routes: R });
+  // À 110 m de la station d'arrivée et à 660 m de l'arrêt de bus. (À moins de 80 m
+  // d'un arrêt, une adresse est tenue pour l'arrêt lui-même : pas de marche.)
+  const D = { lat: 43.63, lon: 1.44 + 560 * kLon };
+
+  test('adresse : tous les arrêts à portée de marche sont candidats, pas seulement le plus proche', () => {
+    const j = r2.journey({ ...O, label: 'Chez moi' }, { ...D, label: 'Bureau' }, A_TRAFFIC);
+    assert.ok(!j.error, j.error);
+    const rides = j.legs.filter((l) => l.type === 'ride');
+    assert.deepEqual(rides.map((l) => l.line), ['M'], 'le métro à 450 m bat le bus à 100 m');
+    assert.equal(j.from.stop_id, 'MA', 'l\'arrêt de départ retenu est celui du trajet, pas le plus proche');
+    const acces = j.legs[0];
+    assert.equal(acces.type, 'walk');
+    assert.equal(acces.from, 'Chez moi');
+    assert.equal(acces.to, 'Métro Départ');
+    // 450 m à vol d'oiseau, 1,3 fois plus par les rues, à 1,25 m/s : 468 s.
+    assert.ok(Math.abs(acces.seconds - 468) <= 3, `marche d'accès ${acces.seconds} s`);
+    assert.deepEqual(acces.from_pos, [O.lat, O.lon], 'le tracé part de l\'adresse');
+    assert.deepEqual(acces.to_pos, [S.MA.lat, S.MA.lon]);
+    const sortie = j.legs[j.legs.length - 1];
+    assert.equal(sortie.to, 'Bureau');
+    assert.deepEqual(sortie.to_pos, [D.lat, D.lon]);
+    assert.equal(j.arrive_at - j.depart_at, j.duration_s);
+    assert.equal(j.duration_s, j.legs.reduce((n, l) => n + l.seconds, 0) + rides.reduce((n, l) => n + Math.max(0, l.depart - l.ready_at), 0), 'la durée est la somme des étapes et des attentes');
+  });
+
+  test('adresse : si l\'on exclut le métro, le bus proche reste proposé', () => {
+    const j = r2.journey(O, D, A_TRAFFIC, { exclude: new Set(['M']) });
+    assert.deepEqual(j.legs.filter((l) => l.type === 'ride').map((l) => l.line), ['B']);
+    assert.equal(j.from.stop_id, 'BA');
+  });
+
+  test('adresse : deux adresses voisines se rejoignent à pied, de porte à porte', () => {
+    const voisin = { lat: 43.6, lon: 1.44 + 300 * kLon, label: 'Boulangerie' };
+    const j = r2.journey({ ...O, label: 'Chez moi' }, voisin, A_TRAFFIC);
+    assert.equal(j.walk_only, true);
+    assert.equal(j.legs.length, 1, 'une seule marche, pas « jusqu\'à l\'arrêt puis de l\'arrêt »');
+    assert.equal(j.legs[0].from, 'Chez moi');
+    assert.equal(j.legs[0].to, 'Boulangerie');
+    assert.ok(Math.abs(j.duration_s - 312) <= 3, `300 m par les rues : ${j.duration_s} s`);
+    assert.equal(j.transfers, 0);
+  });
+
+  test('adresse : loin de tout arrêt, on s\'accroche au plus proche — ou l\'on dit qu\'il n\'y en a pas', () => {
+    const loin = { lat: 43.6, lon: 1.44 - 1000 * kLon }; // à 900 m du bus, hors du rayon des candidats
+    const j = r2.journey(loin, D, A_TRAFFIC);
+    assert.ok(!j.error, j.error);
+    assert.equal(j.from.stop_id, 'BA', 'repli sur l\'arrêt le plus proche dans 1 200 m');
+    const perdu = r2.journey({ lat: 43.5, lon: 1.2 }, D, A_TRAFFIC);
+    assert.match(perdu.error, /Aucun arrêt accessible/);
+  });
+
+  test('station nommée : aucun temps d\'accès n\'est ajouté, le comportement d\'avant est gardé', () => {
+    const j = r2.journey({ stop_id: 'MA' }, { stop_id: 'MB' }, A_TRAFFIC);
+    assert.deepEqual(j.legs.map((l) => l.type), ['ride']);
+    assert.match(r2.journey({ stop_id: 'MA' }, { stop_id: 'MA' }, A_TRAFFIC).error, /même arrêt/);
+  });
+}

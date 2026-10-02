@@ -119,3 +119,14 @@ test('le plafond de clusters est respecté', () => {
   assert.ok(model.stopClusters('Jean Jaurès', 2).length <= 2);
   assert.ok(model.stopClusters('Jean Jaurès', 1).length <= 1);
 });
+
+test('un nom d\'arrêt court au milieu d\'un nom de lieu ne capte pas la saisie', () => {
+  // L'arrêt « Stade » existe. « Stade Ernest Wallon » est un stade, à l'autre
+  // bout de la ville : la saisie doit partir au géocodeur, pas à cet arrêt.
+  assert.ok(Object.values(stops).some((s) => s.n === 'Stade'), 'l\'arrêt « Stade » existe dans les données');
+  assert.deepEqual(model.stopClusters('Stade Ernest Wallon', 4), []);
+  assert.deepEqual(model.stopClusters('Mairie de Blagnac Odyssud', 4).filter((c) => stops[c.representant].n === 'Mairie'), []);
+  // Le remplissage, lui, ne gêne pas.
+  assert.equal(stops[model.stopClusters('station Capitole', 4)[0].representant].n, 'Capitole');
+  assert.equal(stops[model.stopClusters('Stade', 4)[0].representant].n, 'Stade');
+});

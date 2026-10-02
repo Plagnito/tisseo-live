@@ -460,6 +460,51 @@ test('lieux : un résultat doit porter les mots qui DISTINGUENT le lieu demandé
   assert.equal(calls.journey.length, 0);
 });
 
+// La saisie EST le nom d'une commune. Trois issues : le réseau y passe (son
+// centre), il n'y passe pas (refus), ou ce n'est qu'un hameau homonyme d'un
+// quartier toulousain (on ne s'en mêle pas).
+const communesFictives = async (q) => {
+  if (/^lavaur$/i.test(q)) return [{ name: 'Lavaur', context: '81, Tarn, Occitanie', population: 10965, lat: 43.6969, lon: 1.8162 }, { name: 'Lavaur', context: '24, Dordogne', population: 85, lat: 44.6175, lon: 1.0348 }];
+  if (/^blagnac$/i.test(q)) return [{ name: 'Blagnac', context: '31, Haute-Garonne, Occitanie', population: 26000, lat: 43.6312, lon: 1.3750 }];
+  if (/^capitole$/i.test(q)) return [{ name: 'Capitole', context: '99, Nulle part', population: 50000, lat: 48.0, lon: 2.0 }];
+  if (/^jaur[eè]s$/i.test(q)) return [{ name: 'Jaurès', context: '02, Aisne', population: 120, lat: 49.5, lon: 3.5 }];
+  return [];
+};
+const avenues = async (q) => (/lavaur/i.test(q) ? [{ label: 'Avenue de Lavaur 31500 Toulouse', type: 'address', lat: 43.6046, lon: 1.4456 }] : []);
+
+test('lieux : une commune hors réseau n\'est pas remplacée par la rue toulousaine qui porte son nom', async () => {
+  const { svc, calls } = fakeSvc({ geocode: avenues, communes: communesFictives });
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: 'Capitole', arrivee: 'Lavaur' }), /commune hors du réseau Tisséo \(Tarn, à \d+ km de Toulouse\)/);
+  assert.equal(calls.journey.length, 0, 'aucun trajet calculé vers un sosie');
+  // Écrite en entier, la voie toulousaine reste joignable.
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: 'Capitole', arrivee: 'avenue de Lavaur' }), /arrêt du test/);
+  assert.equal(calls.journey[0].to.label, 'Avenue de Lavaur 31500 Toulouse');
+});
+
+test('lieux : une commune desservie se résout à son centre', async () => {
+  const { svc, calls } = fakeSvc({ geocode: avenues, communes: communesFictives });
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: 'Capitole', arrivee: 'Blagnac' }), /arrêt du test/);
+  assert.equal(calls.journey[0].to.label, 'Blagnac (centre)');
+  const r = await tool(createTools(svc), 'rechercher_lieu').handler({ recherche: 'Blagnac' });
+  assert.match(JSON.stringify(r), /Blagnac \(centre\)/);
+});
+
+test('lieux : un arrêt dont le nom commence par la saisie passe avant toute commune homonyme', async () => {
+  let appels = 0;
+  const { svc, calls } = fakeSvc({ communes: async (q) => { appels++; return communesFictives(q); } });
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: 'Capitole', arrivee: 'Aéroport' }), /arrêt du test/);
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: 'Aéroport', arrivee: 'Capitole' }), /arrêt du test/);
+  assert.equal(appels, 0, 'un arrêt franc ne consulte pas l\'annuaire des communes');
+  assert.equal(calls.journey[1].to.stop_id, 'stop_point:CAP');
+  // « Jaurès » ne commence aucun nom d'arrêt ; le hameau homonyme (120 habitants,
+  // non desservi) ne doit pas faire refuser l'arrêt « Jean Jaurès ».
+  await assert.rejects(tool(createTools(svc), 'itineraire').handler({ depart: 'Capitole', arrivee: 'Jaurès' }), /arrêt du test/);
+  assert.equal(stops[calls.journey[2].to.stop_id].n, 'Jean Jaurès');
+  // L'annuaire en panne ne bloque rien.
+  const panne = fakeSvc({ communes: async () => { throw new Error('géocodeur HTTP 503'); } });
+  await assert.rejects(tool(createTools(panne.svc), 'itineraire').handler({ depart: 'Capitole', arrivee: 'Jaurès' }), /arrêt du test/);
+});
+
 test('lieux : une saisie vide ou faite d\'espaces est refusée avant tout géocodage', async () => {
   const { svc, calls } = fakeSvc();
   await assert.rejects(tool(createTools(svc), 'rechercher_lieu').handler({ recherche: '    ' }), /Recherche vide/);

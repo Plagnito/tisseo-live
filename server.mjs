@@ -34,6 +34,7 @@ import { createMcpServer } from './lib/mcp.mjs';
 import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
 import { indexRealtime } from './lib/realtime.mjs';
 import { parseDisruptions, NO_DISRUPTION } from './lib/perturbations.mjs';
+import { decorateJourney } from './lib/journey-geometry.mjs';
 import { createCityService, cityCatalog } from './lib/city.mjs';
 import { createCityDirectory, profileCatalog } from './lib/cities.mjs';
 import { createStore } from './lib/store.mjs';
@@ -653,12 +654,26 @@ const JOURNEY_MAX_TENTATIVES = 8;
 const MARCHE_MAX_S = 25 * 60;
 // Un point peut être : un id d'arrêt (?from_stop=…), des coordonnées
 // (?from_lat=…&from_lon=…), "lat,lon" ou un nom d'arrêt (?from=capitole).
+// Tous les quais d'une station : même nom, à moins de 300 m. Les deux sens d'une
+// ligne n'emploient pas le même quai ; le routeur doit les recevoir tous.
+const normNom = (x) => String(x ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+function quaisDe(stopId) {
+  const s = stops[stopId];
+  if (!s) return [];
+  const nom = normNom(s.n);
+  const voisins = router.stopsNear(s.lat, s.lon, 300).map((x) => x.id).filter((id) => normNom(stops[id].n) === nom);
+  return [...new Set([stopId, ...voisins])];
+}
 function parseEndpoint(prefix, req) {
   const stop = req.query[`${prefix}_stop`];
-  if (stop) return stops[stop] ? { stop_id: stop } : null;
-  const lat = Number(req.query[`${prefix}_lat`]);
-  const lon = Number(req.query[`${prefix}_lon`]);
-  if (Number.isFinite(lat) && Number.isFinite(lon)) return { lat, lon, label: req.query[`${prefix}_label`] };
+  // Un arrêt choisi dans les suggestions : la station entière, pas un seul quai.
+  if (stop) return stops[stop] ? { stop_ids: quaisDe(stop), label: stops[stop].n } : null;
+  // « Number('') vaut 0 » : un champ vide ne doit pas devenir le point 0,0.
+  const brut = [req.query[`${prefix}_lat`], req.query[`${prefix}_lon`]];
+  const lat = Number(brut[0]), lon = Number(brut[1]);
+  if (brut.every((x) => x != null && String(x).trim() !== '') && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+    return { lat, lon, label: String(req.query[`${prefix}_label`] ?? '').slice(0, 160) || undefined };
+  }
   const q = req.query[prefix] ?? req.query[`${prefix}_q`];
   if (!q) return null;
   const m = String(q).match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
@@ -670,7 +685,15 @@ function parseEndpoint(prefix, req) {
   // relie que les arrêts d'une même variante, il faut donc lui proposer chaque
   // quai. On essaie dans l'ordre : stations les mieux desservies d'abord,
   // puis tous leurs quais.
-  const clusters = stopClusters(String(q), JOURNEY_MAX_SITES);
+  // Seul un arrêt qui PORTE le nom saisi est pris ici. Celui qui ne fait que le
+  // contenir (« Albi » → « Route d'Albi », « Muret » → « Avenue Muret … ») passe
+  // par le résolveur commun, qui se demande d'abord si la saisie est une ville.
+  const sansArticle = (x) => normNom(x).replace(/\bste\b/g, 'sainte').replace(/\bst\b/g, 'saint').replace(/^(?:l |la |le |les |d )/, '');
+  const voulu = sansArticle(q);
+  const clusters = stopClusters(String(q), JOURNEY_MAX_SITES).filter((c) => {
+    const nom = sansArticle(stops[c.representant]?.n ?? c.nom);
+    return nom === voulu || ` ${voulu} `.includes(` ${nom} `);
+  });
   if (!clusters.length) return null;
   // Le premier cluster sert de point d'arrivée par défaut ; tous ses quais
   // sont proposés au routeur, qui choisit lui-même le bon sens.
@@ -691,43 +714,21 @@ function uniquementAPied(legs) {
   return !legs?.length || legs.every((l) => l.type === 'walk');
 }
 
-// Le champ de saisie promet « une adresse… », et l'outil MCP sait deja le
-// faire : le geocodeur existait mais n'etait branche que sur /mcp. Un nom qui
-// ne correspond a aucun arret part donc au geocodeur, et l'on retient le
-// lieu le plus proche d'un arret desserti : sans quoi « Stade Ernest Wallon »
-// serait introuvable alors que l'arret est a 80 m.
+// Le champ de saisie promet « une adresse… ». Un nom qui ne correspond à aucun
+// arrêt passe par le MÊME résolveur que le connecteur (lib/tools.mjs) : adresse
+// ou lieu toulousain desservi, et refus — plutôt qu'un sosie — quand la saisie
+// nomme une autre ville ou ne ressemble à rien (« Paris Gare de Lyon » ne
+// devient plus « Montaudran - Gare »).
 async function resoudreLieu(q) {
-  if (!q) return null;
-  let list;
-  try { list = await geocode(q); } catch { return null; }
-  if (!list?.length) return null;
-  // Le lieu doit être ATTEIGNABLE (un arrêt desservi à moins de 800 m), mais
-  // parmi les lieux atteignables on garde le mieux noté par le géocodeur, pas
-  // le plus proche d'un arrêt : chercher « 1 place Wilson » renvoyait sinon un
-  // lieu mieux noté situé dans un autre quartier, simplement parce qu'un bus y
-  // passe à côté.
-  const atteignables = [];
-  for (const l of list) {
-    if (l.lat == null || l.lon == null) continue;
-    const proche = router.stopsNear(l.lat, l.lon, 800);
-    if (!proche.length) continue;
-    const d = haversineM(l.lat, l.lon, stops[proche[0].id].lat, stops[proche[0].id].lon);
-    if (d > 800) continue;
-    atteignables.push({ ...l, arret: proche[0].id, distance: d });
+  const texte = String(q ?? '').trim();
+  if (!texte) return null;
+  try {
+    const p = await outilsTransport.resoudreLieu(texte);
+    if (p.arret_id) return { stop_ids: quaisDe(p.arret_id), label: p.nom, approx: Boolean(p.attention) };
+    return { lat: p.lat, lon: p.lon, label: p.nom };
+  } catch (err) {
+    return { erreur: String(err?.message || err) };
   }
-  if (!atteignables.length) return null;
-  // Une saisie qui ressemble à une adresse doit être servie par une adresse.
-  // Le géocodeur ne le fait pas de lui-même : « 1 place Wilson » renvoie six
-  // « Place X » mieux notés (0,60 à 0,63) que l'adresse exacte (0,48), dans
-  // des quartiers différents — et le voyageur atterrissait à l'autre bout de
-  // la ville.
-  const texte = String(q).toLowerCase();
-  const ressembleAUneAdresse = /^\s*\d/.test(texte)
-    || /\b(rue|avenue|av\.|boulevard|bd |place|all[ée]e|chemin|impasse|route|quai|cours|square|passage|voie)\b/.test(texte);
-  const adresse = atteignables.filter((l) => l.type === 'address');
-  const pool = ressembleAUneAdresse && adresse.length ? adresse : atteignables;
-  pool.sort((a, b) => (b.score - a.score) || (a.distance - b.distance));
-  return pool[0];
 }
 
 app.get('/api/journey', ah(async (req, res) => {
@@ -737,26 +738,23 @@ app.get('/api/journey', ah(async (req, res) => {
   // peut-être une adresse ou un lieu (« 5 allées Brunschvicg », « Stade
   // Ernest Wallon »). Le champ le promet depuis le début ; seul l'outil MCP le
   // faisait jusqu'ici.
-  const geo = [];
+  const refus = [];
   if (!from) {
     const lieu = await resoudreLieu(req.query.from ?? req.query.from_q);
-    if (lieu) geo.push(['from', lieu]);
+    if (lieu?.erreur) refus.push(lieu.erreur); else if (lieu) from = lieu;
   }
   if (!to) {
     const lieu = await resoudreLieu(req.query.to ?? req.query.to_q);
-    if (lieu) geo.push(['to', lieu]);
-  }
-  if (geo.length) {
-    for (const [cote, lieu] of geo) {
-      if (cote === 'from') from = { lat: lieu.lat, lon: lieu.lon, label: lieu.label };
-      else to = { lat: lieu.lat, lon: lieu.lon, label: lieu.label };
-    }
+    if (lieu?.erreur) refus.push(lieu.erreur); else if (lieu) to = lieu;
   }
   if (!from || !to) {
-    const missing = [!from ? `from="${req.query.from ?? ''}"` : null, !to ? `to="${req.query.to ?? ''}"` : null]
+    const missing = [!from ? `départ « ${req.query.from ?? ''} »` : null, !to ? `arrivée « ${req.query.to ?? ''} »` : null]
       .filter(Boolean).join(' et ');
     return res.status(400).json({
-      error: `Point introuvable : ${missing}`,
+      // Le résolveur dit POURQUOI (lieu hors de Toulouse, adresse inconnue…) :
+      // son message vaut mieux qu'un « introuvable » générique.
+      error: refus.length ? refus.join(' ') : `Point introuvable : ${missing}`,
+      missing: [!from ? 'from' : null, !to ? 'to' : null].filter(Boolean),
       hint: 'Nom d’arrêt (ex. "Capitole"), adresse (« 5 allées Brunschvicg »), '
         + 'id (stop_point:SP_1912) ou coordonnées "lat,lon".',
     });
@@ -835,7 +833,73 @@ app.get('/api/journey', ah(async (req, res) => {
       retenu: { from: out.from?.name, to: out.to?.name },
     };
   }
+  // Ce que l'on a compris de chaque bout (une adresse, un lieu, une station).
+  out.origin = { label: from.label ?? out.from?.name, ...(Number.isFinite(from.lat) ? { lat: from.lat, lon: from.lon } : {}) };
+  out.destination = { label: to.label ?? out.to?.name, ...(Number.isFinite(to.lat) ? { lat: to.lat, lon: to.lon } : {}) };
+  // Perturbations des lignes empruntées, à l'heure du trajet : déjà prises en
+  // compte par le calcul, et dites au voyageur.
+  const dis = disruptions();
+  if (dis) {
+    const empruntees = [...new Set(out.legs.filter((l) => l.type === 'ride').map((l) => l.route_id))];
+    const vus = new Set();
+    const actives = dis.activeFor(empruntees, at).filter((c) => (vus.has(c.alert_id + c.title) ? false : vus.add(c.alert_id + c.title)));
+    if (actives.length) out.disruptions = actives.map((c) => ({ line: c.line, route_id: c.route_id, title: c.title, url: c.url, kind: c.kind, stops: c.names.slice(0, 12) }));
+  }
+  // Tracé de chaque étape : tout le trajet se dessine d'un coup (?trace=0 pour s'en passer).
+  if (req.query.trace !== '0') {
+    await decorateJourney(out, { variants, stops, walk: (a, b) => cityContext.walk(a, b) });
+  }
   return res.json(out);
+}));
+
+// Suggestions pendant la saisie d'un départ ou d'une arrivée : arrêts du réseau
+// d'abord (la recherche locale est instantanée), puis adresses et lieux
+// toulousains desservis (géocodeur IGN). ?q=…
+const SUGGEST_RATE = { windowMs: 60_000, max: 240 };
+const lignesParQuai = new Map(); // quai -> [route_id]
+for (const [routeId, list] of Object.entries(variants)) for (const v of list) for (const sid of v.stops) {
+  const l = lignesParQuai.get(sid) ?? lignesParQuai.set(sid, []).get(sid);
+  if (!l.includes(routeId)) l.push(routeId);
+}
+const suggestHits = new Map();
+app.get('/api/places/suggest', ah(async (req, res) => {
+  const ip = req.headers['cf-connecting-ip'] || String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
+  const t = Date.now();
+  let e = suggestHits.get(ip);
+  if (!e || t - e.start > SUGGEST_RATE.windowMs) { e = { start: t, n: 0 }; suggestHits.set(ip, e); }
+  if (++e.n > SUGGEST_RATE.max) return res.status(429).json({ error: 'Trop de requêtes : réessayez dans une minute.' });
+  if (suggestHits.size > 5000) for (const [k, v] of suggestHits) if (t - v.start > SUGGEST_RATE.windowMs) suggestHits.delete(k);
+
+  const q = String(req.query.q ?? '').trim().slice(0, 120);
+  if (q.length < 2) return res.json({ q, stops: [], places: [] });
+  // Lignes de la STATION entière (tous ses quais), les modes lourds d'abord :
+  // « Matabiau Gare SNCF » est d'abord une station de métro.
+  const poids = { 1: 0, 0: 1, 6: 2 };
+  const lignesDe = (id) => [...new Set(quaisDe(id).flatMap((x) => lignesParQuai.get(x) ?? []))]
+    .map((rid) => routeById.get(rid)).filter(Boolean)
+    .sort((a, b) => (poids[a.type] ?? 3) - (poids[b.type] ?? 3) || String(a.short_name).localeCompare(String(b.short_name), 'fr', { numeric: true }))
+    .map((r) => r.short_name);
+  const arrets = searchStops(q, 6).filter((x) => x.served).slice(0, 5).map((x) => ({ id: x.id, name: x.name, lat: x.lat, lon: x.lon, lines: lignesDe(x.id).slice(0, 8) }));
+  let places = [];
+  // Une suggestion doit porter ce qui est tapé : chaque mot de la saisie (hors
+  // « de », « la »… et hors numéro) commence un mot du libellé. Le géocodeur,
+  // lui, rend volontiers « U.F.R. Chirurgie Dentaire » pour « 25 rue de me ».
+  const VIDES = new Set(['de', 'du', 'des', 'la', 'le', 'les', 'l', 'd', 'a', 'au', 'aux', 'et', 'en']);
+  const mots = normNom(q).split(' ').filter((m) => m && !VIDES.has(m) && !/^d+$/.test(m));
+  const ABREGES = { bd: 'boulevard', bld: 'boulevard', av: 'avenue', ave: 'avenue', pl: 'place', ch: 'chemin', rte: 'route', all: 'allee', imp: 'impasse', st: 'saint', ste: 'sainte' };
+  const repondA = (label) => { const w = normNom(label).split(' '); return mots.every((m) => w.some((x) => x.startsWith(m) || (ABREGES[m] && x.startsWith(ABREGES[m])))); };
+  // Trois lettres au moins, et pas un simple nom d'arrêt déjà trouvé à l'identique.
+  if (q.length >= 3) {
+    try {
+      places = (await geocode(q, { partial: true }))
+        // Desservi : un arrêt à moins de 1,5 km (sinon aucun trajet n'est possible).
+        .filter((l) => router.stopsNear(l.lat, l.lon, 1500).length > 0)
+        .filter((l) => l.kind !== 'municipality' && repondA(l.label))
+        .slice(0, 5)
+        .map((l) => ({ label: l.label, type: l.type, kind: l.kind, lat: Math.round(l.lat * 1e5) / 1e5, lon: Math.round(l.lon * 1e5) / 1e5 }));
+    } catch { /* géocodeur injoignable : les arrêts suffisent */ }
+  }
+  res.json({ q, stops: arrets, places });
 }));
 
 app.get('/api/status', ah(async (req, res) => {
@@ -985,9 +1049,31 @@ async function geocode(q, { partial = false } = {}) {
   return list;
 }
 
+// Communes portant un nom (index des adresses, type « municipality »). Sert à
+// reconnaître qu'une saisie nomme une VILLE — voir communeNommee (lib/tools.mjs).
+async function communes(q) {
+  const key = 'c|' + String(q).trim().toLowerCase();
+  const hit = geoCache.get(key);
+  if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.list;
+  const params = { q: String(q).trim().slice(0, 120), index: 'address', type: 'municipality', limit: '8', lat: '43.6045', lon: '1.4442' };
+  const res = await fetch(`${GEOCODE_URL}?${new URLSearchParams(params)}`, { signal: AbortSignal.timeout(4000), headers: { 'User-Agent': 'TisseoLive/1.0 (plagnito.com)' } });
+  if (!res.ok) throw new Error(`géocodeur HTTP ${res.status}`);
+  const list = ((await res.json()).features ?? []).map((f) => ({
+    name: f.properties?.name ?? null,
+    postcode: f.properties?.postcode ?? null,
+    context: f.properties?.context ?? null,
+    population: Number(f.properties?.population) || 0,
+    lat: f.geometry?.coordinates?.[1],
+    lon: f.geometry?.coordinates?.[0],
+  })).filter((c) => c.name);
+  if (geoCache.size > 2000) geoCache.delete(geoCache.keys().next().value);
+  geoCache.set(key, { at: Date.now(), list });
+  return list;
+}
 
 const outilsTransport = createTools({
     routes, stops, variants, routeById, modeOf, searchStops,
+    communes,
     live: getComputed,
     liveOrNull: computedOrNull,
     departuresAt: (id, c, nowSec, n) => departuresAt(id, c, nowSec, n).departures,
