@@ -82,6 +82,21 @@ théoriques, et la carte indique que les véhicules sont des positions estimées
 Le serveur public sert les API Ville et Tisséo. Le téléphone peut les consulter
 par Wi-Fi ou réseau mobile, sans le PC ni le tunnel USB.
 
+## Version 1.3 : des écrans qui se lisent d’un coup d’œil
+
+Les écrans ne sont plus des paragraphes. Chaque fonction s’annonce par une image, un titre court et une ligne ; les précisions (confidentialité, limites, sources) sont des notes d’une ligne, chacune avec son pictogramme.
+
+- **Itinéraire en frise** : les heures à gauche, chaque ligne à sa couleur, la marche en pointillés, les correspondances nommées — au lieu de « 1. Prendre… 2. Descendre… ».
+- **Prochains passages** : le code de la ligne à sa couleur, la destination, et l’attente en grand.
+- **Listes** : une pastille par catégorie de lieu, le code de ligne pour un véhicule, une icône par action.
+- **Promenade** : quatre tuiles de distance et un histogramme des sept derniers jours ; badges et défi avec leur jauge.
+- **Quand il n’y a rien** : un dessin, ce qui manque, et comment commencer.
+- Le compte a son bouton rond dans l’en-tête, plein quand on est connecté.
+
+Tout est dessiné par le projet, dans sa palette : `node scripts/make-art.mjs` écrit les icônes (`ic_*`, au trait, teintées par l’application) et les illustrations (`ill_*`) en VectorDrawable dans `res/drawable/`, et `--apercu planche.html` en donne une planche à relire dans un navigateur. Aucune image importée. Les blocs d’interface (pastille, carte, frise, tuile, histogramme) sont dans `Art.java`. Les dessins sont décoratifs pour un lecteur d’écran : chaque bloc porte un libellé complet.
+
+`scripts/test-device.ps1` fonctionne aussi sous Windows PowerShell 5.1 et fait défiler la rangée de puces pour atteindre un bouton hors de l’écran.
+
 ## Version 1.2 : compte Atlas, trajets planifiés, partages
 
 La pastille **Compte** ouvre la connexion Atlas dans le navigateur du téléphone ; l’application ne voit jamais le mot de passe. Le retour se fait par le lien `tisseo-ville://auth`, avec un billet à usage unique échangé contre un jeton de session, gardé dans les préférences privées et lié au serveur qui l’a émis (changer de serveur l’oublie). Sans compte, tout le reste de l’application fonctionne comme avant.

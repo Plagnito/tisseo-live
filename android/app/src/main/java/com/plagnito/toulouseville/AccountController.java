@@ -57,7 +57,7 @@ final class AccountController {
     void show() {
         if (!connected()) { signedOut(null); return; }
         LinearLayout box = host.column();
-        box.addView(host.text("Lecture de ton compte…", 13, MainActivity.MUTED, false));
+        box.addView(Art.note(host, R.drawable.ic_refresh, "Lecture de ton compte…"));
         host.showSheet("Mon compte", box);
         refresh(this::render);
     }
@@ -81,10 +81,15 @@ final class AccountController {
     private void signedOut(String notice) {
         host.accountChanged();
         LinearLayout box = host.column();
-        if (notice != null) box.addView(host.text(notice, 14, MainActivity.ACCENT, true));
-        box.addView(host.text("Avec un compte Atlas, tes trajets te suivent d’un appareil à l’autre : enregistre ceux que tu fais souvent, planifie-les avec un rappel, partage-les avec tes amis.", 14, MainActivity.INK, false));
-        box.addView(host.button("Se connecter avec Atlas", () -> host.openUrl(host.apiBase() + "/api/auth/connexion?app=android")));
-        box.addView(host.text("La connexion s’ouvre dans ton navigateur : l’application ne voit jamais ton mot de passe. Sans compte, la carte, les itinéraires et « Mes déplacements » restent entièrement utilisables.", 12, MainActivity.MUTED, false));
+        if (notice != null) box.addView(Art.warning(host, notice));
+        box.addView(Art.hero(host, R.drawable.ill_account));
+        box.addView(host.text("Tes trajets te suivent partout", 19, MainActivity.INK, true));
+        box.addView(Art.feature(host, R.drawable.ic_bookmark, MainActivity.ACCENT, "Enregistre tes trajets", "Ceux que tu fais souvent, recalculés d’un geste."));
+        box.addView(Art.feature(host, R.drawable.ic_bell, Art.OK, "Planifie avec un rappel", "Un jour précis, ou chaque semaine à la même heure."));
+        box.addView(Art.feature(host, R.drawable.ic_friends, MainActivity.INK, "Partage avec tes amis", "Un trajet, ou ta position pour une durée choisie."));
+        box.addView(Art.primary(host, R.drawable.ic_account, "Se connecter avec Atlas", () -> host.openUrl(host.apiBase() + "/api/auth/connexion?app=android")));
+        box.addView(Art.note(host, R.drawable.ic_lock, "La connexion s’ouvre dans ton navigateur : l’application ne voit jamais ton mot de passe."));
+        box.addView(Art.note(host, R.drawable.ic_check, "Sans compte, la carte, les itinéraires et « Mes déplacements » restent utilisables."));
         host.showSheet("Mon compte", box);
     }
 
@@ -120,42 +125,57 @@ final class AccountController {
     private void render() {
         if (state == null) return;
         LinearLayout box = host.column();
-        box.addView(host.text("Connecté : " + state.optJSONObject("compte").optString("pseudo"), 14, MainActivity.MUTED, false));
+        LinearLayout who = Art.panel(host, Art.SAND);
+        LinearLayout identity = host.row();
+        identity.addView(Art.bubble(host, R.drawable.ic_account, MainActivity.INK, 46));
+        LinearLayout whoText = host.column(); whoText.setPadding(host.dp(12), 0, 0, 0);
+        whoText.addView(host.text(state.optJSONObject("compte").optString("pseudo"), 18, MainActivity.INK, true));
+        whoText.addView(host.text("Compte Atlas connecté", 13, MainActivity.MUTED, false));
+        identity.addView(whoText, new LinearLayout.LayoutParams(0, -2, 1));
+        who.addView(identity); box.addView(who);
 
-        box.addView(host.text("Mes trajets", 17, MainActivity.INK, true));
+        box.addView(Art.section(host, R.drawable.ic_route, "Mes trajets"));
         List<JSONObject> trips = list(state, "trajets");
-        if (trips.isEmpty()) box.addView(host.text("Enregistre un trajet que tu fais souvent : il sera aussi sur le site et tes autres appareils.", 13, MainActivity.MUTED, false));
-        for (JSONObject t : trips) box.addView(host.resultRow(t.optString("nom"), route(t), t.optInt("utilisations") > 0 ? "Utilisé " + t.optInt("utilisations") + " fois" : "Jamais calculé", () -> tripActions(t)));
-        box.addView(host.button("Enregistrer un trajet", () -> tripDialog()));
+        if (trips.isEmpty()) box.addView(Art.empty(host, R.drawable.ill_empty, "Aucun trajet enregistré", "Enregistre un trajet que tu fais souvent : il te suivra sur le site et tes autres appareils."));
+        for (JSONObject t : trips) box.addView(host.resultRow(R.drawable.ic_route, MainActivity.INK, t.optString("nom"), t.optString("nom").equals(route(t)) ? "" : route(t), t.optInt("utilisations") > 0 ? "Utilisé " + t.optInt("utilisations") + " fois" : "Jamais calculé", () -> tripActions(t)));
+        box.addView(Art.button(host, R.drawable.ic_plus, "Enregistrer un trajet", () -> tripDialog()));
 
-        box.addView(host.text("Planifiés", 17, MainActivity.INK, true));
+        box.addView(Art.section(host, R.drawable.ic_calendar, "Planifiés"));
         List<JSONObject> plans = list(state, "planifies");
-        if (plans.isEmpty()) box.addView(host.text("Un trajet à faire un jour précis, ou chaque semaine à la même heure : planifie-le depuis un trajet enregistré.", 13, MainActivity.MUTED, false));
-        for (JSONObject p : plans) box.addView(host.resultRow(p.optString("nom"), route(p) + "\n" + rhythm(p),
+        if (plans.isEmpty()) box.addView(Art.empty(host, R.drawable.ill_plan, "Rien de planifié", "Un jour précis, ou chaque semaine à la même heure : planifie depuis un trajet enregistré."));
+        for (JSONObject p : plans) box.addView(host.resultRow(p.isNull("rappel_min") ? R.drawable.ic_calendar : R.drawable.ic_bell, MainActivity.ACCENT, p.optString("nom"), (p.optString("nom").equals(route(p)) ? "" : route(p) + "\n") + rhythm(p),
                 p.optBoolean("passe") ? "Passé" : "Prochaine fois : " + PlanRules.when(p.optLong("prochaine")) + (p.isNull("rappel_min") ? "" : " · rappel"), () -> planActions(p)));
 
-        box.addView(host.text("Avec mes amis", 17, MainActivity.INK, true));
+        box.addView(Art.section(host, R.drawable.ic_friends, "Avec mes amis"));
         JSONObject shares = state.optJSONObject("partages");
         boolean sharingHere = ShareService.running && !store.shareId().isEmpty();
         if (sharingHere) {
-            box.addView(host.text("Ta position est partagée avec " + store.shareNames() + " jusqu’à " + PlanRules.clock(store.shareExpire()) + ".\n" + store.shareStatus(), 14, MainActivity.ACCENT, true));
-            box.addView(host.button("Arrêter le partage de position", () -> { stopSharing(true); handler.postDelayed(this::show, 500); }));
-        } else box.addView(host.button("Partager ma position", this::positionDialog));
+            LinearLayout live = Art.panel(host, Art.BLUSH);
+            LinearLayout head = host.row();
+            head.addView(Art.bubble(host, R.drawable.ic_target, MainActivity.ACCENT, 42));
+            LinearLayout texts = host.column(); texts.setPadding(host.dp(12), 0, 0, 0);
+            texts.addView(host.text("Ta position est partagée", 15, MainActivity.INK, true));
+            texts.addView(host.text("Avec " + store.shareNames() + " · jusqu’à " + PlanRules.clock(store.shareExpire()), 13, MainActivity.INK, false));
+            texts.addView(host.text(store.shareStatus(), 12, MainActivity.MUTED, false));
+            head.addView(texts, new LinearLayout.LayoutParams(0, -2, 1));
+            live.addView(head); box.addView(live);
+            box.addView(Art.button(host, R.drawable.ic_stop_square, "Arrêter le partage de position", () -> { stopSharing(true); handler.postDelayed(this::show, 500); }));
+        } else box.addView(Art.button(host, R.drawable.ic_target, "Partager ma position", this::positionDialog));
         List<JSONObject> received = list(shares, "recus"), sent = list(shares, "envoyes");
-        if (received.isEmpty() && sent.isEmpty()) box.addView(host.text("Tes amis sont tes contacts Atlas. Partage-leur un trajet ou, pour un temps limité, ta position.", 13, MainActivity.MUTED, false));
+        if (received.isEmpty() && sent.isEmpty()) box.addView(Art.empty(host, R.drawable.ill_share, "Aucun partage en cours", "Tes amis sont tes contacts Atlas. Partage-leur un trajet ou, pour un temps limité, ta position."));
         if (!received.isEmpty()) box.addView(host.text("Partagé avec moi", 14, MainActivity.INK, true));
-        for (JSONObject s : received) box.addView(host.resultRow(s.optJSONObject("de").optString("pseudo"), shareText(s), s.optString("id").equals(followed) ? "Suivi sur la carte" : shareHint(s), () -> receivedActions(s)));
+        for (JSONObject s : received) box.addView(host.resultRow(shareIcon(s), Art.OK, s.optJSONObject("de").optString("pseudo"), shareText(s), s.optString("id").equals(followed) ? "Suivi sur la carte" : shareHint(s), () -> receivedActions(s)));
         if (!sent.isEmpty()) box.addView(host.text("Ce que je partage", 14, MainActivity.INK, true));
-        for (JSONObject s : sent) box.addView(host.resultRow("→ " + names(s), shareText(s), shareHint(s), () -> sentActions(s)));
+        for (JSONObject s : sent) box.addView(host.resultRow(shareIcon(s), MainActivity.INK, "→ " + names(s), shareText(s), shareHint(s), () -> sentActions(s)));
 
-        box.addView(host.text("Assistants", 17, MainActivity.INK, true));
-        box.addView(host.text("ChatGPT ou Claude peuvent gérer tes trajets si tu leur ajoutes le connecteur de Tisséo Live. Tu les autorises, et tu leur retires l’accès, depuis le site.", 13, MainActivity.MUTED, false));
-        box.addView(host.button("Gérer mes assistants ↗", () -> host.openUrl(host.apiBase() + "/?compte=1")));
+        box.addView(Art.section(host, R.drawable.ic_assistant, "Assistants"));
+        box.addView(Art.feature(host, R.drawable.ic_assistant, MainActivity.INK, "ChatGPT ou Claude, avec tes trajets", "Ajoute-leur le connecteur de Tisséo Live : tu les autorises, et tu leur retires l’accès, depuis le site."));
+        box.addView(Art.button(host, R.drawable.ic_link, "Gérer mes assistants", () -> host.openUrl(host.apiBase() + "/?compte=1")));
 
-        box.addView(host.text("Mon compte", 17, MainActivity.INK, true));
-        box.addView(host.button("Se déconnecter", this::signOut));
-        box.addView(host.button("Effacer mes données Tisséo Live", this::eraseDialog));
-        box.addView(host.text("Le serveur garde ton pseudo Atlas, tes trajets et tes partages en cours. Les positions partagées ne sont jamais enregistrées.", 12, MainActivity.MUTED, false));
+        box.addView(Art.section(host, R.drawable.ic_account, "Mon compte"));
+        box.addView(Art.button(host, R.drawable.ic_logout, "Se déconnecter", this::signOut));
+        box.addView(Art.button(host, R.drawable.ic_trash, "Effacer mes données Tisséo Live", this::eraseDialog));
+        box.addView(Art.note(host, R.drawable.ic_lock, "Le serveur garde ton pseudo Atlas, tes trajets et tes partages en cours. Les positions partagées ne sont jamais enregistrées."));
         host.showSheet("Mon compte", box);
     }
 
@@ -166,6 +186,7 @@ final class AccountController {
         if (t == null) return "Trajet" + message;
         return (t.isNull("nom") ? "" : t.optString("nom") + " · ") + route(t) + (t.isNull("heure") || !t.has("heure") ? "" : "\n" + rhythm(t)) + message;
     }
+    private static int shareIcon(JSONObject s) { return "position".equals(s.optString("type")) ? R.drawable.ic_target : R.drawable.ic_route; }
     private String shareHint(JSONObject s) { return "position".equals(s.optString("type")) ? "Jusqu’à " + PlanRules.clock(s.optLong("expire")) : "Trajet partagé"; }
 
     // ------------------------------------------------------------------- trajets
@@ -211,19 +232,41 @@ final class AccountController {
     private void itinerary(String title, JSONObject answer) {
         JSONObject i = answer.optJSONObject("itineraire");
         LinearLayout box = host.column();
-        if (i == null) { box.addView(host.text("Itinéraire indisponible.", 14, MainActivity.MUTED, false)); host.showSheet(title, box); return; }
+        if (i == null) { box.addView(Art.empty(host, R.drawable.ill_empty, "Itinéraire indisponible", "Réessaie dans un instant.")); box.addView(Art.button(host, R.drawable.ic_account, "Retour à mon compte", this::show)); host.showSheet(title, box); return; }
         String arrival = i.isNull("arriver_a") ? i.optString("arrivee_estimee_non_fiable", "?") : i.optString("arriver_a");
-        box.addView(host.text((i.has("jour") ? i.optString("jour") + "\n" : "") + "Départ " + i.optString("partir_a") + " → arrivée " + arrival, 20, MainActivity.INK, true));
+        if (i.has("jour")) box.addView(host.text(i.optString("jour"), 13, MainActivity.ACCENT, true));
+        int minutes = i.optInt("duree_min");
+        LinearLayout head = host.row();
+        head.addView(host.text(minutes >= 90 ? (minutes / 60) + " h " + String.format(Locale.FRENCH, "%02d", minutes % 60) : minutes + " min", 28, MainActivity.INK, true));
+        TextView when = host.text(i.optString("partir_a") + " → " + arrival, 15, MainActivity.MUTED, false); when.setPadding(host.dp(12), host.dp(6), 0, 0); head.addView(when);
+        box.addView(head);
+        // Le libellé complet reste dit, pour un lecteur d'écran comme pour un test : « Départ 07:17 → arrivée 07:24 ».
+        head.setContentDescription("Départ " + i.optString("partir_a") + " → arrivée " + arrival + ", " + minutes + " minutes");
         JSONObject fare = i.optJSONObject("tarif");
-        box.addView(host.text(i.optInt("duree_min") + " min · " + (i.optInt("correspondances") == 0 ? "direct" : i.optInt("correspondances") + " correspondance(s)") + (fare == null || fare.isNull("ticket") ? "" : " · " + fare.optString("ticket")), 13, MainActivity.MUTED, false));
-        if (answer.has("avertissement")) box.addView(host.text("⚠ " + answer.optString("avertissement"), 13, MainActivity.ACCENT, true));
+        int transfers = i.optInt("correspondances");
+        box.addView(host.text((transfers == 0 ? "Direct" : transfers == 1 ? "1 correspondance" : transfers + " correspondances") + (fare == null || fare.isNull("ticket") ? "" : " · ticket " + fare.optString("ticket")), 13, MainActivity.MUTED, false));
         JSONArray steps = i.optJSONArray("etapes");
-        for (int k = 0; steps != null && k < steps.length(); k++) box.addView(host.text((k + 1) + ". " + steps.optJSONObject(k).optString("instruction"), 15, MainActivity.INK, false));
+        List<Art.Step> frise = Art.steps(); List<String> autres = new ArrayList<>();
+        for (int k = 0; steps != null && k < steps.length(); k++) {
+            JSONObject e = steps.optJSONObject(k); if (e == null) continue;
+            Art.Step s = new Art.Step(); s.minutes = e.optInt("duree_min");
+            if ("trajet".equals(e.optString("type"))) {
+                s.ride = true; s.line = e.optString("ligne"); s.mode = e.optString("mode"); s.direction = e.optString("direction");
+                s.from = e.optString("monter_a"); s.to = e.optString("descendre_a"); s.depart = e.optString("depart"); s.arrive = e.optString("arrivee");
+                s.color = host.lineColor(s.line); s.live = "realtime".equals(e.optString("source")); s.status = e.optString("statut");
+            } else if ("marche".equals(e.optString("type"))) { s.from = e.optString("de"); s.to = e.optString("vers"); }
+            else { autres.add(e.optString("instruction")); continue; }
+            frise.add(s);
+        }
+        box.addView(Art.chain(host, frise));
+        if (answer.has("avertissement")) box.addView(Art.warning(host, answer.optString("avertissement")));
         JSONArray alerts = i.optJSONArray("alertes");
-        for (int k = 0; alerts != null && k < alerts.length(); k++) box.addView(host.text("⚠ " + alerts.optString(k), 13, MainActivity.ACCENT, true));
-        if (i.has("attention")) box.addView(host.text("⚠ " + i.optString("attention"), 13, MainActivity.ACCENT, true));
-        box.addView(host.text(i.optString("fiabilite"), 12, MainActivity.MUTED, false));
-        box.addView(host.button("← Mon compte", this::show));
+        for (int k = 0; alerts != null && k < alerts.length(); k++) box.addView(Art.warning(host, alerts.optString(k)));
+        if (i.has("attention")) box.addView(Art.warning(host, i.optString("attention")));
+        box.addView(Art.timeline(host, frise));
+        for (String autre : autres) if (!autre.isEmpty()) box.addView(Art.note(host, R.drawable.ic_info, autre, MainActivity.INK));
+        if (!i.optString("fiabilite").isEmpty()) box.addView(Art.note(host, R.drawable.ic_info, i.optString("fiabilite")));
+        box.addView(Art.button(host, R.drawable.ic_account, "Retour à mon compte", this::show));
         host.showSheet(title, box);
     }
 

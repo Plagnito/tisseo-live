@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Généré par scripts/make-art.mjs : ne pas modifier à la main. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="320dp" android:height="150dp" android:viewportWidth="320" android:viewportHeight="150">
+    <path android:pathData="M22,8H298a22,22 0 0,1 22,22V120a22,22 0 0,1 -22,22H22a22,22 0 0,1 -22,-22V30a22,22 0 0,1 22,-22Z" android:fillColor="#EFE6D6" />
+    <path android:pathData="M52,40L122,28L198,44L268,30V112L198,126L122,110L52,122Z" android:fillColor="#FFFFFF" />
+    <path android:pathData="M122,28V110M198,44V126" android:strokeColor="#E3DCCB" android:strokeWidth="3" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M52,40L122,28L198,44L268,30V112L198,126L122,110L52,122Z" android:strokeColor="#253C3B" android:strokeWidth="3.5" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M81.8,96a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM89.08,90.72a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM96.75,86a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM104.81,82.01a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM113.24,78.88a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM121.98,76.77a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM130.92,75.8a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM139.91,76.06a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM148.79,77.52a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM157.41,80.07a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM165.69,83.58a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0ZM173.6,87.88a2.2,2.2 0 1,0 4.4,0a2.2,2.2 0 1,0 -4.4,0Z" android:fillColor="#253C3B" />
+    <path android:pathData="M196,92C196,92 182,77 182,67a14,14 0 0,1 28,0C210,77 196,92 196,92Z" android:fillColor="#B45B40" />
+    <path android:pathData="M189.6,67a6.4,6.4 0 1,0 12.8,0a6.4,6.4 0 1,0 -12.8,0Z" android:fillColor="#FFFFFF" />
+    <path android:pathData="M78,100a6,6 0 1,0 12,0a6,6 0 1,0 -12,0Z" android:fillColor="#7FAE8F" />
+</vector>

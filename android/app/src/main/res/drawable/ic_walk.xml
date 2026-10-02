@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Généré par scripts/make-art.mjs : ne pas modifier à la main. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M11.5,4.4a1.7,1.7 0 1,0 3.4,0a1.7,1.7 0 1,0 -3.4,0Z" android:fillColor="#253C3B" />
+    <path android:pathData="M13,8.2L11.2,13.2L13.8,16L14.3,21M11.2,13.2L8.6,21M13,8.4L9.6,10.4L8.6,13.4M13.2,8.6L15.4,11.2L18,12.2" android:strokeColor="#253C3B" android:strokeWidth="1.8" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

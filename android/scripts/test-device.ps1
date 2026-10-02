@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)][string]$Serial,
     [string]$ApiUrl = 'https://tisseo.plagnito.com'
 )
@@ -7,8 +7,10 @@ $taskOutput = Join-Path $PSScriptRoot '..\captures'
 New-Item -ItemType Directory -Path $taskOutput -Force | Out-Null
 function Read-Ui {
     & adb -s $Serial shell uiautomator dump /sdcard/toulouse-ville-ui.xml | Out-Null
-    & adb -s $Serial pull /sdcard/toulouse-ville-ui.xml (Join-Path $taskOutput 'device-test.xml') 2>&1 | Out-Null
-    [xml](Get-Content (Join-Path $taskOutput 'device-test.xml') -Raw)
+    # adb écrit sa progression sur la sortie d'erreur : sous Windows PowerShell 5.1, avec « Stop », la rediriger
+    # dans PowerShell lève une exception alors que la copie a réussi. On laisse cmd.exe s'en charger.
+    cmd /c "adb -s $Serial pull /sdcard/toulouse-ville-ui.xml ""$(Join-Path $taskOutput 'device-test.xml')"" >nul 2>&1"
+    [xml](Get-Content (Join-Path $taskOutput 'device-test.xml') -Raw -Encoding UTF8)
 }
 function Tap-Node($node) {
     if (!$node) { throw "Élément attendu absent de l'écran." }
@@ -16,13 +18,29 @@ function Tap-Node($node) {
     & adb -s $Serial shell input tap ([int](($taskNumbers[0]+$taskNumbers[2])/2)) ([int](($taskNumbers[1]+$taskNumbers[3])/2))
     Start-Sleep -Milliseconds 500
 }
-function Tap-Text([string]$Label) { $taskUi = Read-Ui; Tap-Node ($taskUi.SelectNodes('//node') | Where-Object { $_.text -eq $Label } | Select-Object -First 1) }
+function Find-Text([string]$Label) { $taskUi = Read-Ui; $taskUi.SelectNodes('//node') | Where-Object { $_.text -eq $Label } | Select-Object -First 1 }
+function Tap-Text([string]$Label) {
+    $taskNode = Find-Text $Label
+    for ($taskTry = 0; -not $taskNode -and $taskTry -lt 5; $taskTry++) {
+        # Rangée des puces : sous le champ de recherche. On la fait glisser vers la gauche.
+        $taskUi = Read-Ui
+        $taskField = $taskUi.SelectNodes('//node[@class="android.widget.EditText"]') | Select-Object -First 1
+        if (-not $taskField) { break }
+        $taskBox = [regex]::Matches($taskField.bounds,'\d+') | ForEach-Object { [int]$_.Value }
+        $taskY = $taskBox[3] + [int](($taskBox[3]-$taskBox[1]) * 0.9)
+        & adb -s $Serial shell input swipe 900 $taskY 250 $taskY 300
+        Start-Sleep -Milliseconds 600
+        $taskNode = Find-Text $Label
+    }
+    if (-not $taskNode) { throw "Élément attendu absent de l'écran : $Label" }
+    Tap-Node $taskNode
+}
 function Assert-Text([string]$Text) { $taskUi=Read-Ui; if(-not ($taskUi.SelectNodes('//node') | Where-Object { $_.text -like "*$Text*" })) { throw "Texte attendu : $Text" } }
 
 & adb -s $Serial shell am force-stop com.plagnito.toulouseville
 & adb -s $Serial shell am start -n com.plagnito.toulouseville/.MainActivity --es api_url $ApiUrl | Out-Null
 Start-Sleep -Seconds 3
-Tap-Text 'Explorer la ville'
+Tap-Text 'Explorer'
 Start-Sleep -Seconds 2
 $taskUi = Read-Ui
 $taskRow = $taskUi.SelectNodes('//node') | Where-Object { $_.class -eq 'android.widget.LinearLayout' -and $_.clickable -eq 'true' -and $_.'content-desc' -like '*,*,*' } | Select-Object -First 1
@@ -32,13 +50,13 @@ $taskSave = $taskUi.SelectNodes('//node') | Where-Object { $_.text -like '*Enreg
 if ($taskSave) { Tap-Node $taskSave }
 Assert-Text 'Retirer des favoris'
 Tap-Text 'Fermer'
-Tap-Text '☆ Favoris'
+Tap-Text 'Favoris'
 Assert-Text 'Mes favoris'
 Write-Output 'Favori enregistré et retrouvé.'
 & adb -s $Serial shell am force-stop com.plagnito.toulouseville
 & adb -s $Serial shell am start -n com.plagnito.toulouseville/.MainActivity | Out-Null
 Start-Sleep -Seconds 2
-Tap-Text '☆ Favoris'
+Tap-Text 'Favoris'
 Assert-Text 'Mes favoris'
 Write-Output 'Favori conservé après redémarrage.'
 Tap-Text 'Tisséo'
@@ -63,7 +81,7 @@ Start-Sleep -Seconds 3
 Assert-Text 'Ton itinéraire'
 Write-Output 'Itinéraire Capitole → Jean Jaurès calculé.'
 Tap-Text 'Fermer'
-Tap-Text 'Explorer la ville'
+Tap-Text 'Explorer'
 Tap-Text 'Autour de moi'
 Tap-Text '10 minutes à pied'
 Tap-Text 'Centre de la carte'
@@ -78,5 +96,5 @@ Assert-Text 'min à pied'
 Tap-Text 'Fermer'
 Write-Output 'Zone piétonne et parcours natif calculés.'
 & adb -s $Serial shell screencap -p /sdcard/toulouse-ville-test.png
-& adb -s $Serial pull /sdcard/toulouse-ville-test.png (Join-Path $taskOutput 'native-city-verified.png') 2>&1 | Out-Null
+cmd /c "adb -s $Serial pull /sdcard/toulouse-ville-test.png ""$(Join-Path $taskOutput 'native-city-verified.png')"" >nul 2>&1"
 Write-Output 'Tests natifs terminés.'
