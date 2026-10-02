@@ -179,6 +179,20 @@ test('lieux : une adresse hors du réseau (Lavaur) est écartée au profit de To
   assert.deepEqual(calls.journey[0].from, { lat: 43.6022, lon: 1.4458, label: '12 Rue d\'Alsace Lorraine 31000 Toulouse' });
 });
 
+test('lieux : un texte sans rapport ne devient pas « Toulouse »', async () => {
+  // Le géocodeur, interrogé avec « <texte> Toulouse », rend la commune elle-même.
+  const commune = { label: 'Toulouse', type: 'address', lat: 43.6045, lon: 1.4440 };
+  const { svc, calls } = fakeSvc({ geocode: async (q) => (/toulouse/i.test(q) ? [commune] : []) });
+  const it = tool(createTools(svc), 'itineraire');
+  await assert.rejects(it.handler({ depart: 'xqzwvk', arrivee: 'Capitole' }), /Lieu introuvable : « xqzwvk »/);
+  assert.equal(calls.journey.length, 0, 'aucun itinéraire n’est calculé vers un lieu inventé');
+  // Le même géocodeur reste écouté quand sa réponse porte bien ce qui est demandé.
+  const gare = { label: 'Halle aux Grains, Toulouse', type: 'poi', lat: 43.6001, lon: 1.4530 };
+  const ok = fakeSvc({ geocode: async (q) => (/toulouse/i.test(q) ? [gare] : []) });
+  await assert.rejects(tool(createTools(ok.svc), 'itineraire').handler({ depart: 'halle aux grains', arrivee: 'Capitole' }), /arrêt du test/);
+  assert.equal(ok.calls.journey[0].from.label, 'Halle aux Grains, Toulouse');
+});
+
 test('lieux : entre deux homonymes, le plus desservi gagne et les autres sont signalés', async () => {
   const { svc } = fakeSvc();
   const pp = tool(createTools(svc), 'prochains_passages');
