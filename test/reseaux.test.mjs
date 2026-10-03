@@ -86,9 +86,11 @@ const DATASETS = [
   { type: 'bike-data', slug: 'velos', title: 'VLS', covered_area: [{ type: 'commune', insee: '33063' }], resources: [gtfs('https://exemple.test/v.zip'), rt('https://exemple.test/v', [])] },
 ];
 
-test('catalogue : seuls les réseaux qui publient du temps réel, avec le GTFS en vigueur', () => {
+test('catalogue : les réseaux et ce que chacun publie, avec le GTFS en vigueur', () => {
   const e = entriesFromDatasets(DATASETS, NOW);
-  assert.deepEqual(e.map((x) => x.id), ['tbm', 'navette', 'star', 'ilevia', 'suburbain'], 'ni le réseau sans temps réel, ni celui qui ne publie que des alertes');
+  assert.deepEqual(e.map((x) => x.id), ['tbm', 'navette', 'star', 'ilevia', 'sans-rt', 'hors-service', 'alertes-seules', 'suburbain'], 'un réseau urbain sans temps réel est gardé pour ses horaires ; les vélos ne sont pas un réseau');
+  // Sans temps réel utilisable : ni flux absent, ni flux en panne, ni alertes seules ne font des véhicules.
+  for (const id of ['sans-rt', 'hors-service', 'alertes-seules']) assert.deepEqual([e.find((x) => x.id === id).positions, e.find((x) => x.id === id).horaires, e.find((x) => x.id === id).rt.length], [false, false, 0], id);
   const star = e.find((x) => x.id === 'star');
   assert.deepEqual(star.gtfs.map((g) => g.url), ['https://exemple.test/en-cours.zip'], 'la « version à venir » n\'est pas lue');
   const tbm = e[0];
@@ -102,10 +104,10 @@ test('catalogue : seuls les réseaux qui publient du temps réel, avec le GTFS e
 
 test('catalogue : une ville trouve son réseau par sa commune ou son intercommunalité', () => {
   const e = entriesFromDatasets(DATASETS, NOW);
-  assert.deepEqual(networksFor(e, { insee: '33063', epci: '243300316' }).map((x) => x.id), ['tbm', 'navette'], 'le réseau urbain avant la navette');
+  assert.deepEqual(networksFor(e, { insee: '33063', epci: '243300316' }).map((x) => x.id), ['tbm', 'navette', 'hors-service', 'alertes-seules'], 'le réseau urbain avant la navette, et ceux qui n\'ont que des horaires en dernier');
   assert.deepEqual(networksFor(e, { insee: '33281', epci: '243300316' }).map((x) => x.id), ['tbm'], 'une commune voisine de la métropole a le réseau, pas la navette');
-  assert.deepEqual(networksFor(e, { insee: '33063', epci: null }).map((x) => x.id), ['navette'], 'sans intercommunalité connue : la commune seule');
-  assert.deepEqual(networksFor(e, { insee: '69123', epci: '200046977' }), [], 'Lyon ne publie pas de temps réel');
+  assert.deepEqual(networksFor(e, { insee: '33063', epci: null }).map((x) => x.id), ['navette', 'hors-service', 'alertes-seules'], 'sans intercommunalité connue : la commune seule');
+  assert.deepEqual(networksFor(e, { insee: '69123', epci: '200046977' }).map((x) => x.id), ['sans-rt'], 'Lyon ne publie pas de temps réel : son réseau est là pour ses horaires');
   assert.deepEqual(networksFor(e, { insee: '59350', epci: '200093201' }).map((x) => x.id), ['ilevia', 'suburbain'], 'à nature égale, le réseau de la métropole avant celui qui en couvre trois');
 });
 
@@ -387,7 +389,7 @@ test('connecteur : véhicules par ligne, véhicules d\'une ligne, passages à un
   const { t, tools } = outil();
   assert.ok(t, 'l\'outil existe quand le service des réseaux est fourni');
   assert.equal(createCityTools({ cities: {}, cityService: {}, cityContext: {}, profileCatalog: () => ({}) }).some((x) => x.name === 'ville_transports'), false, 'et pas sans lui');
-  assert.equal(tools.length, 8);
+  assert.equal(tools.length, 9);
   const lig = await t.handler({ ville: 'fr:33063', ligne: 'b' });
   assert.deepEqual([lig.reseau, lig.ligne, lig.mode, lig.vehicules.length], ['TBM', 'B', 'Tram', 2]);
   assert.match(lig.positions, /publiées par le réseau \(GPS\)/);
@@ -404,6 +406,6 @@ test('connecteur : véhicules par ligne, véhicules d\'une ligne, passages à un
 test('connecteur : Toulouse, une ville sans temps réel, une ville étrangère — chaque cas est dit', async () => {
   const { t } = outil();
   await assert.rejects(t.handler({ ville: 'fr:31555' }), /outils Tisséo/);
-  await assert.rejects(t.handler({ ville: 'fr:69123' }), /Aucun réseau de Lyon ne publie de temps réel.*Rien n'est inventé/);
+  await assert.rejects(t.handler({ ville: 'fr:69123' }), /Aucun réseau de Lyon n'est publié au point d'accès national.*Rien n'est inventé/);
   await assert.rejects(t.handler({ ville: 'geo:52.5:13.4' }), /villes françaises/);
 });

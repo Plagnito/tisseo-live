@@ -274,21 +274,48 @@ Nancy… Aucune liste n'est écrite dans le code : elle vient du **point d'accè
 - **Le navigateur ne fournit jamais d'adresse**, seulement l'identifiant d'un réseau du
   catalogue. Les adresses du catalogue sont elles-mêmes contrôlées avant lecture, redirections
   comprises : ni la machine, ni le réseau local (`publicUrl`).
-- **Ce qui manque, et qui est dit.** Paris, Lyon, Strasbourg et Marseille ne publient ni
-  positions ni horaires temps réel au point d'accès national : ces villes gardent leurs lieux,
-  sans véhicules. Hors de Toulouse il n'y a ni itinéraire ni horaires théoriques. Un flux en
-  panne (Grenoble sert une page web à la place du sien, Nantes refuse souvent les lectures)
-  donne « ne répond pas pour l'instant », jamais une carte vide présentée comme calme.
+- **Trois natures de réseau.** « gps » et « estime » ci-dessus, et « theorique » : un réseau
+  urbain qui ne publie QUE ses horaires (Lyon, Marseille, Strasbourg). Il n'a pas de véhicules
+  à montrer — la case ne dit pas « en direct », la pastille LIVE disparaît — mais garde ses
+  arrêts, des passages théoriques présentés comme tels, et l'itinéraire.
+- **L'itinéraire, sur le réseau de la ville.** Le routeur de Toulouse (`lib/router.mjs`) est
+  réutilisé tel quel : le GTFS du réseau est préparé dans le format des données Tisséo —
+  lignes, quais, parcours par sens ET par branche, temps de parcours réels, grille horaire
+  rangée par motifs — sur une fenêtre de quinze jours (`lib/reseaux/plan.mjs`, lecture de
+  `stop_times.txt` ligne à ligne, dans le processus à part ; trois à vingt secondes selon la
+  taille du réseau ; `data-net/<réseau>/plan.json`). La préparation ne démarre qu'à la première
+  demande d'itinéraire : en attendant, l'API répond 503 « en préparation » et la page patiente
+  en le disant. Deux réseaux au plus gardent leurs horaires en mémoire. Départ et arrivée : un
+  arrêt du réseau, une adresse ou un lieu (géocodeur national, centré sur la ville), un point.
+  Les heures sont théoriques, et c'est écrit ; quand le réseau publie ses horaires temps réel,
+  une course annoncée remplace l'horaire. Dans la page, c'est le planificateur de Toulouse qui
+  vient s'installer dans le panneau de la ville (`window.Planner.use`) et retrouve sa place
+  ensuite ; les trajets enregistrés du compte restent toulousains.
+- **Vélos en libre-service.** Même catalogue, autre famille : les systèmes À STATIONS (Vélib',
+  Vélo'v, V'lille, LeVélo…) publient un flux GBFS — stations, vélos et places libres. Ses trois
+  versions en circulation sont ramenées à la forme des stations toulousaines
+  (`lib/reseaux/velos.mjs`). Les disponibilités sont relues au plus une fois par minute ; une
+  réponse périmée est servie tout de suite et rafraîchie derrière. Une ville sans système à
+  stations garde les stations référencées dans OpenStreetMap, sans disponibilités. Les flottes
+  sans station (vélos et trottinettes posés sur le trottoir) ne sont pas reprises.
+- **Ce qui manque, et qui est dit.** Paris et l'Île-de-France : pas de réseau (leur jeu de
+  données est régional et d'un autre ordre de grandeur) — la ville garde ses lieux et ses
+  Vélib' en direct. Un flux en panne (Grenoble sert une page web à la place du sien, Nantes
+  refuse souvent les lectures) donne « ne répond pas pour l'instant », jamais une carte vide
+  présentée comme calme. Un itinéraire hors de Toulouse ignore les perturbations du réseau.
 
 | Route | Description |
 |---|---|
-| `GET /api/net/for?city=fr:33063` | Réseaux de la ville qui publient du temps réel, le meilleur d'abord |
-| `GET /api/net/:id/vehicles` | Véhicules en circulation (`nature` : `gps` ou `estime`) |
+| `GET /api/net/for?city=fr:33063` | Réseaux de la ville, le meilleur d'abord (`nature` : `gps`, `estime` ou `theorique`) |
+| `GET /api/net/:id/vehicles` | Véhicules en circulation (aucun pour un réseau `theorique`) |
 | `GET /api/net/:id/vehicle?vid=…` | Arrêts à venir d'un véhicule et tracés de sa ligne |
 | `GET /api/net/:id/stops?bbox=sud,ouest,nord,est` | Arrêts dans une emprise |
-| `GET /api/net/:id/stop?stop_id=…` | Prochains passages à un arrêt (tous ses quais) |
+| `GET /api/net/:id/stop?stop_id=…` | Prochains passages à un arrêt (tous ses quais) ; `theoretical` quand ils viennent des horaires |
+| `GET /api/net/:id/plan` | État des horaires du réseau (`preparation`, `pret`, `indisponible`) ; lance leur préparation |
+| `GET /api/net/:id/suggest?q=…&city=…` | Arrêts du réseau et adresses de la ville, pour la saisie |
+| `GET /api/net/:id/journey?from=…&to=…&at=…&city=…` | Itinéraire (aussi `from_stop`, `from_lat`/`from_lon`/`from_label`, idem `to_`) ; 503 pendant la préparation |
 
-Contrôles : `node --test test/reseaux.test.mjs` et `npm run test:e2e:reseaux` (réseau fabriqué,
+Contrôles : `node --test test/reseaux.test.mjs test/reseaux-plan.test.mjs` et `npm run test:e2e:reseaux` (réseau fabriqué,
 aucun flux réel).
 
 ## Compte Atlas : trajets enregistrés, planifiés, partagés
@@ -349,7 +376,8 @@ Deux adresses, le même serveur **MCP** (transport « Streamable HTTP », sans �
 | `etat_du_reseau` | Vue d'ensemble, fraîcheur des données, validité des horaires |
 | `ville_rechercher`, `ville_categories`, `ville_lieux` | Mode Ville : trouver une ville, ses catégories, ses lieux |
 | `ville_meteo`, `ville_a_pied`, `ville_a_distance_de_marche`, `ville_balade` | Météo, trajet piéton, ce qui est à N minutes à pied, balade à étapes |
-| `ville_transports` | Transports EN DIRECT d'une autre ville française : véhicules par ligne, véhicules d'une ligne, passages à un arrêt — positions publiées ou estimées, c'est dit |
+| `ville_transports` | Transports d'une autre ville française : véhicules par ligne, véhicules d'une ligne, passages à un arrêt — positions publiées ou estimées, passages en direct ou théoriques, c'est dit |
+| `ville_itineraire` | Itinéraire en transports dans une autre ville française, sur le réseau de la ville ; chaque étape dit si son heure est théorique |
 
 Avec un compte (`/mcp/compte`) :
 

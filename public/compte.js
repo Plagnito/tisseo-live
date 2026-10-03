@@ -476,6 +476,8 @@
   function apresResultat() {
     const boite = $('jResults');
     if (!boite || boite.querySelector('.cpt-apres') || !boite.querySelector('.jhead')) return;
+    // Trajets enregistrés et planifiés : réseau toulousain seulement.
+    if (window.Planner?.context()) return;
     const de = $('jFrom').value.trim(), a = $('jTo').value.trim();
     if (!de || !a) return;
     const zone = document.createElement('div');

@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import { createMcpServer, checkArgs, ToolError } from '../lib/mcp.mjs';
 import { createTools, parseHeure, parisToEpoch, heure } from '../lib/tools.mjs';
 import { createRouter } from '../lib/router.mjs';
-import { routeActiveAt, ymd } from '../lib/schedules.mjs';
+import { routeActiveAt, loadSchedules, ymd } from '../lib/schedules.mjs';
 
 // --- protocole -------------------------------------------------------------
 
@@ -243,9 +243,18 @@ test('routeActiveAt : dans l\'amplitude, hors amplitude, date inconnue', () => {
   const day = new Date(2026, 8, 28);
   const idx = {
     patternsByDate: new Map([[ymd(day), [0]]]),
-    spans: new Map([['r:X', new Map([[0, [6 * 3600, 21 * 3600]]])]]),
+    spans: new Map([['r:X', new Map([[0, [[6 * 3600, 21 * 3600]]]])], ['r:N', new Map([[0, [[1 * 3600, 5 * 3600], [25 * 3600, 29 * 3600]]]])]]),
   };
   const at = (h) => Math.floor(day.getTime() / 1000) + h * 3600;
+  // Une ligne de nuit roule tôt le matin et après minuit : pas à 17 h 45.
+  assert.equal(routeActiveAt(idx, 'r:N', at(3)), true);
+  assert.equal(routeActiveAt(idx, 'r:N', at(17.75)), false, 'entre ses deux plages, une ligne de nuit ne roule pas');
+  assert.equal(routeActiveAt(idx, 'r:N', at(26)), true);
+  // … et les plages se lisent dans de vrais horaires : un trou de plus de deux heures les sépare.
+  const lu = loadSchedules({ patterns: [[ymd(day)]], lines: { 'r:S': { 0: { headsign: 'École', stops: { a: { 0: [7 * 3600, 7.5 * 3600, 8 * 3600, 16.5 * 3600, 17 * 3600] }, b: { 0: [7.2 * 3600, 8.4 * 3600, 17.3 * 3600] } } } } } });
+  assert.deepEqual(lu.spans.get('r:S').get(0), [[7 * 3600, 8.4 * 3600], [16.5 * 3600, 17.3 * 3600]]);
+  assert.equal(routeActiveAt(lu, 'r:S', at(12)), false, 'ligne scolaire : pas à midi');
+  assert.equal(routeActiveAt(lu, 'r:S', at(16.4)), true);
   assert.equal(routeActiveAt(idx, 'r:X', at(12)), true);
   assert.equal(routeActiveAt(idx, 'r:X', at(23)), false);
   assert.equal(routeActiveAt(idx, 'r:X', at(5.8)), true, 'marge avant le premier départ');

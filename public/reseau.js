@@ -5,6 +5,11 @@
  * dit quel réseau couvre la ville, puis sert ses véhicules — positions GPS
  * publiées, ou estimées d'après les horaires temps réel quand le réseau ne
  * publie que ceux-là. La carte dit toujours laquelle des deux.
+ *
+ * Un réseau qui ne publie QUE ses horaires (nature « theorique » : Lyon,
+ * Marseille, Strasbourg) n'a pas de véhicules à montrer, mais garde ses arrêts,
+ * ses passages théoriques et l'itinéraire. Dans tous les cas le planificateur
+ * de la page (app.js) vient s'installer ici et calcule sur ce réseau.
  */
 (() => {
   'use strict';
@@ -28,6 +33,9 @@
 
   const box = $('reseauBox'), check = $('reseauLive'), label = $('reseauLabel'), etat = $('reseauEtat'), choix = $('reseauChoix');
   if (!box) return;
+  const badge = $('reseauBadge'), planBox = $('reseauPlanner');
+  const direct = () => current && current.nature !== 'theorique';
+  const repos = (n) => (n.nature === 'gps' ? 'Ce réseau publie la position de ses véhicules.' : n.nature === 'theorique' ? 'Ce réseau ne publie pas de temps réel : arrêts, passages et itinéraires d’après ses horaires.' : 'Ce réseau publie ses horaires temps réel : positions estimées.');
   check.checked = lire('tisseo.reseau.on', true);
 
   const heure = (t) => new Date(t * 1000).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: profile?.timezone || undefined });
@@ -51,7 +59,7 @@
       if (!visible && map.hasLayer(l)) map.removeLayer(l);
     }
     if (!visible) { clearTimeout(timer); timer = null; map.closePopup(popup); return; }
-    if (!timer && !busy) poll();
+    if (direct() && !timer && !busy) poll();
     loadStops();
   }
 
@@ -87,7 +95,7 @@
 
   async function poll() {
     clearTimeout(timer); timer = null;
-    if (!active || !check.checked || !current) return;
+    if (!active || !check.checked || !direct()) return;
     const mine = ticket, id = current.id;
     if (document.hidden) { timer = setTimeout(poll, 5000); return; }
     busy = true;
@@ -176,8 +184,9 @@
       if (mine !== ticket || !popup.isOpen()) return;
       const liste = d.departures?.length
         ? `<ol class="rv-deps">${d.departures.slice(0, 8).map((x) => `<li>${pastille(x)}<span>${h(x.headsign || '')}</span><time>${h(dans(x.time, d.at))}</time></li>`).join('')}</ol>`
-        : `<p class="rv-more">${d.realtime ? 'Aucun passage annoncé dans les deux heures.' : 'Ce réseau ne publie pas ses passages en temps réel.'}</p>`;
-      popup.setContent(`<div class="rv-card"><div class="rv-head"><div><strong>${h(d.stop?.name || s.name)}</strong><small>Arrêt · ${h(current?.name || '')}</small></div></div>${liste}<p class="rv-src">Passages en temps réel publiés par le réseau</p></div>`);
+        : `<p class="rv-more">${d.realtime ? 'Aucun passage annoncé dans les deux heures.' : 'Aucun passage à afficher : pas de temps réel, et les horaires publiés n’en donnent pas pour l’instant (ou sont en cours de préparation — rouvrez l’arrêt dans quelques secondes).'}</p>`;
+      const source = d.theoretical ? 'Horaires théoriques publiés par le réseau, sans temps réel' : d.departures?.length || d.realtime ? 'Passages en temps réel publiés par le réseau' : '';
+      popup.setContent(`<div class="rv-card"><div class="rv-head"><div><strong>${h(d.stop?.name || s.name)}</strong><small>Arrêt · ${h(current?.name || '')}</small></div></div>${liste}${source ? `<p class="rv-src">${source}</p>` : ''}</div>`);
     } catch { popup.setContent(`<div class="rv-card"><strong>${h(s.name)}</strong><p class="rv-more">Passages indisponibles pour l’instant.</p></div>`); }
   }
   map.on('moveend', () => { if (active && check.checked && current) loadStops(); });
@@ -191,9 +200,33 @@
   }
   function choose(n) {
     const keep = networks; reset(); networks = keep; current = n;
-    label.textContent = `Transports en direct · ${n.name}`;
-    note(check.checked ? 'Lecture du temps réel…' : (n.nature === 'gps' ? 'Ce réseau publie la position de ses véhicules.' : 'Ce réseau publie ses horaires temps réel : positions estimées.'), true);
+    label.textContent = direct() ? `Transports en direct · ${n.name}` : `Transports · ${n.name}`;
+    badge?.classList.toggle('hidden', !direct());
+    note(check.checked && direct() ? 'Lecture du temps réel…' : repos(n), true);
+    planifier();
     show();
+  }
+  // Le planificateur de la page vient calculer sur ce réseau, ici même.
+  function planifier() {
+    if (!window.Planner) return;
+    if (!active || !current) { window.Planner.use(null); return; }
+    const base = `/api/net/${encodeURIComponent(current.id)}`, ville = `?city=${encodeURIComponent(profile.id)}`;
+    window.Planner.use({ journey: `${base}/journey${ville}`, suggest: `${base}/suggest${ville}`, name: current.name }, planBox);
+  }
+  // Ouvrir le planificateur lance la préparation des horaires du réseau : ils
+  // seront prêts quand la première lettre sera tapée.
+  $('planner')?.addEventListener('toggle', () => {
+    if ($('planner').open && active && current && window.Planner?.context()) fetch(`/api/net/${encodeURIComponent(current.id)}/plan`).catch(() => {});
+  });
+  // « Y aller en transports » depuis la fiche d'un lieu de la ville.
+  function versLieu(p, depuis = null) {
+    if (!active || !current || !window.Planner?.context()) return false;
+    // Une position connue ne sert de départ que si elle est dans la région du lieu.
+    const proche = depuis && Math.hypot(depuis.lat - p.lat, (depuis.lon - p.lon) * Math.cos(p.lat * Math.PI / 180)) < 0.4;
+    window.Planner.go({ lat: p.lat, lon: p.lon, label: p.name }, proche ? depuis : null);
+    $('sidebar')?.classList.add('open');
+    $('planner').scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    return true;
   }
   async function sync(p, isActive) {
     active = Boolean(isActive);
@@ -201,9 +234,9 @@
     // Une ville encore « en attente » (lien direct, nom pas encore connu) ne
     // compte pas : on cherchera son réseau quand le catalogue aura répondu.
     const cle = p && !p.pending ? p.id : null;
-    if (cle === cherche) { show(); return; }
+    if (cle === cherche) { planifier(); show(); return; }
     cherche = cle;
-    reset();
+    reset(); planifier();
     box.classList.add('hidden'); choix.classList.add('hidden');
     if (!p || p.transport === 'tisseo' || !/^fr:/.test(p.id) || p.pending) return;
     const mine = ticket;
@@ -217,9 +250,9 @@
       choose(networks[0]);
     } catch { /* pas de réseau connu : la ville garde ses lieux */ }
   }
-  check.addEventListener('change', () => { ecrire('tisseo.reseau.on', check.checked); if (check.checked) note('Lecture du temps réel…', true); else if (current) note(current.nature === 'gps' ? 'Ce réseau publie la position de ses véhicules.' : 'Ce réseau publie ses horaires temps réel : positions estimées.', true); show(); });
+  check.addEventListener('change', () => { ecrire('tisseo.reseau.on', check.checked); if (current) note(check.checked && direct() ? 'Lecture du temps réel…' : repos(current), true); show(); });
   choix.addEventListener('change', () => { const n = networks[Number(choix.value)]; if (n) choose(n); });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden && active && check.checked && current && !timer && !busy) poll(); });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && active && check.checked && direct() && !timer && !busy) poll(); });
 
-  window.Reseau = { sync, state: () => ({ network: current, vehicles: markers.size, nature: last?.nature ?? null, active }) };
+  window.Reseau = { sync, versLieu, state: () => ({ network: current, vehicles: markers.size, nature: last?.nature ?? current?.nature ?? null, active }) };
 })();

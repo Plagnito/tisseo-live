@@ -7,6 +7,12 @@
 // de près, avec leurs passages. Décocher retire tout ; une ville sans réseau
 // connu ne montre rien, et rien de la ville précédente ne reste.
 //
+// Et l'ITINÉRAIRE : le planificateur de la page vient calculer sur le réseau de
+// la ville (suggestions d'arrêts et d'adresses, attente dite pendant la
+// préparation des horaires, trajet dessiné), puis retrouve sa place à Toulouse.
+// Un réseau qui ne publie que ses horaires n'a pas de véhicules : c'est dit, et
+// ses arrêts donnent des passages théoriques présentés comme tels.
+//
 // Le réseau est FABRIQUÉ (les réponses de /api/net/* et /api/city/* sont
 // interceptées) : le test ne dépend d'aucun flux réel.
 //
@@ -38,6 +44,7 @@ const ok = (c, m) => { console.log((c ? 'OK   ' : 'FAIL ') + m); if (!c) fails.p
 // --- deux villes fabriquées : l'une a un réseau, l'autre non --------------------------
 const VILLE = { id: 'fr:99997', name: 'Réseauville', lat: 47.2, lon: 2.4, country: 'France', country_code: 'FR', region: 'Banc', transport: 'osm', timezone: 'Europe/Paris' };
 const BOURG = { id: 'fr:99998', name: 'Petitbourg', lat: 44.0, lon: 0.5, country: 'France', country_code: 'FR', region: 'Banc', transport: 'osm', timezone: 'Europe/Paris' };
+const HORAIRES = { id: 'fr:99996', name: 'Horaireville', lat: 45.5, lon: 3.1, country: 'France', country_code: 'FR', region: 'Banc', transport: 'osm', timezone: 'Europe/Paris' };
 const SOURCE = { label: 'Banc d’essai', url: 'https://example.org/', license: 'aucune' };
 const CATEGORIES = [['parks', 'Parcs & jardins', 'discover', 'leaf', '#9ace83'], ['events', 'Événements', 'discover', 'calendar', '#f5bd71'], ['works', 'Travaux & voirie', 'daily', 'works', '#f4ac69'], ['stops', 'Arrêts de transports', 'mobility', 'pin', '#79a9f4']]
   .map(([id, label, group, icon, color]) => ({ id, label, group, icon, color, live: false, source: SOURCE }));
@@ -45,7 +52,21 @@ const CATEGORIES = [['parks', 'Parcs & jardins', 'discover', 'leaf', '#9ace83'],
 const LIEU = { lat: VILLE.lat, lon: VILLE.lon, id: `${VILLE.id}:parks:0`, city_id: VILLE.id, city: VILLE.name, category: 'parks', name: 'Square du Banc', subtitle: 'parc', address: '', description: '', details: [], opening_hours: '', wheelchair: 'unknown', vegetarian: false, free_access: null, opening_state: 'unknown', source_url: SOURCE.url, source_label: SOURCE.label };
 
 const RESEAU = { id: 'banc-reseau', name: 'BANC', title: 'Réseau urbain BANC', nature: 'gps', page: 'https://example.org/banc', licence: 'lov2' };
+const RESEAU_H = { id: 'banc-horaires', name: 'HORA', title: 'Réseau urbain HORA', nature: 'theorique', page: 'https://example.org/hora', licence: 'lov2' };
 const maintenant = () => Math.floor(Date.now() / 1000);
+// Un trajet fabriqué : 3 min à pied, puis le tram B d'Alpha à Charlie.
+function trajet(q) {
+  const t = maintenant(), a = [VILLE.lat + 0.0007, VILLE.lon + 0.0011], c = [VILLE.lat + 0.012, VILLE.lon + 0.0011];
+  return {
+    network: { ...RESEAU, static: 'ok' }, depart_at: t, arrive_at: t + 780, duration_s: 780, transfers: 0, walk_m: 210, theoretical: true, schedules_until: '20991231',
+    origin: { label: q.get('from_label') || 'Alpha' }, destination: { label: q.get('to_label') || 'Charlie' },
+    legs: [
+      { type: 'walk', seconds: 180, distance_m: 210, from: 'Place du Banc', to: 'Alpha', path: [[VILLE.lat, VILLE.lon], a] },
+      { type: 'ride', route_id: 'R1', line: 'B', color: 'e50040', text_color: 'ffffff', mode: 'Tram', headsign: 'France Alouette', from: 'Alpha', to: 'Charlie', from_id: 'A', to_id: 'C', depart: t + 240, arrive: t + 780, seconds: 540, scheduled: true,
+        stops: [{ id: 'A', name: 'Alpha', lat: a[0], lon: a[1] }, { id: 'B', name: 'Bravo', lat: VILLE.lat + 0.006, lon: VILLE.lon + 0.0011 }, { id: 'C', name: 'Charlie', lat: c[0], lon: c[1] }], path: [a, [VILLE.lat + 0.006, VILLE.lon + 0.0011], c] },
+    ],
+  };
+}
 let lectures = 0;
 function vehicules() {
   lectures++;
@@ -86,8 +107,8 @@ const erreurs = [];
 page.on('pageerror', (e) => erreurs.push(e.message));
 await page.addInitScript(() => { window.__reseauPeriode = 1500; });
 const json = (route, corps) => route.fulfill({ status: 200, contentType: 'application/json; charset=utf-8', body: JSON.stringify(corps) });
-const villeDe = (route) => (new URL(route.request().url()).searchParams.get('city') === BOURG.id ? BOURG : VILLE);
-const demandes = { for: [], vehicles: 0, vehicle: [], stops: [], stop: [] };
+const villeDe = (route) => { const c = new URL(route.request().url()).searchParams.get('city'); return c === BOURG.id ? BOURG : c === HORAIRES.id ? HORAIRES : VILLE; };
+const demandes = { for: [], vehicles: 0, vehicle: [], stops: [], stop: [], plan: 0, suggest: [], journey: [], horaires: [] };
 await page.route('**/api/city/catalog**', (route) => json(route, { city: villeDe(route).name, profile: villeDe(route), categories: CATEGORIES, notice: 'Ville fabriquée pour le test.' }));
 await page.route('**/api/cities/search**', (route) => json(route, { cities: [BOURG] }));
 await page.route('**/api/city/places**', (route) => {
@@ -97,9 +118,31 @@ await page.route('**/api/city/places**', (route) => {
 await page.route('**/api/city/weather**', (route) => json(route, { temperature_2m: 18, weather_code: 1, min: 12, max: 21, rain_probability: 10, fetched_at: new Date().toISOString(), timezone: 'Europe/Paris' }));
 await page.route('**/api/net/**', (route) => {
   const u = new URL(route.request().url());
-  if (u.pathname === '/api/net/for') { demandes.for.push(u.searchParams.get('city')); return json(route, { city: u.searchParams.get('city'), networks: u.searchParams.get('city') === VILLE.id ? [RESEAU] : [] }); }
-  if (!u.pathname.startsWith(`/api/net/${RESEAU.id}/`)) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"Réseau inconnu du catalogue."}' });
+  if (u.pathname === '/api/net/for') { demandes.for.push(u.searchParams.get('city')); return json(route, { city: u.searchParams.get('city'), networks: u.searchParams.get('city') === VILLE.id ? [RESEAU] : u.searchParams.get('city') === HORAIRES.id ? [RESEAU_H] : [] }); }
   const quoi = u.pathname.split('/').pop();
+  // Le réseau qui ne publie que ses horaires : des arrêts, des passages théoriques, jamais de véhicules.
+  if (u.pathname.startsWith(`/api/net/${RESEAU_H.id}/`)) {
+    demandes.horaires.push(quoi);
+    const t = maintenant();
+    if (quoi === 'stops') return json(route, { network: { ...RESEAU_H, static: 'ok' }, total: 1, stops: [{ id: 'H', name: 'Halte', lat: HORAIRES.lat + 0.0006, lon: HORAIRES.lon + 0.001 }] });
+    if (quoi === 'stop') return json(route, { network: { ...RESEAU_H, static: 'ok' }, at: t, realtime: false, theoretical: true, stop: { id: 'H', name: 'Halte', lat: HORAIRES.lat, lon: HORAIRES.lon, quais: 1 },
+      departures: [{ line: 'M1', color: '#0064b0', text: '#ffffff', mode: 'Métro', headsign: 'La Fourragère', time: t + 250, delay_s: null, theoretical: true }] });
+    if (quoi === 'plan') return json(route, { state: 'pret' });
+    return json(route, { network: { ...RESEAU_H, static: 'ok' }, nature: 'theorique', at: t, vehicles: [] });
+  }
+  if (!u.pathname.startsWith(`/api/net/${RESEAU.id}/`)) return route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"Réseau inconnu du catalogue."}' });
+  if (quoi === 'plan') { demandes.plan++; return json(route, { state: demandes.plan > 1 ? 'pret' : 'preparation' }); }
+  if (quoi === 'suggest') {
+    const q = u.searchParams.get('q'); demandes.suggest.push({ q, city: u.searchParams.get('city') });
+    // La toute première demande tombe pendant la préparation des horaires.
+    if (demandes.suggest.length === 1) return json(route, { state: 'preparation', q, stops: [], places: [] });
+    return json(route, { state: 'pret', q, stops: /^al/i.test(q) ? [{ id: 'A', name: 'Alpha', lat: ARRETS[0].lat, lon: ARRETS[0].lon, lines: ['B', '23'] }] : [], places: /rue/i.test(q) ? [{ label: '12 rue du Banc, Réseauville', type: 'address', kind: 'housenumber', lat: VILLE.lat + 0.012, lon: VILLE.lon + 0.001 }] : [] });
+  }
+  if (quoi === 'journey') {
+    demandes.journey.push(Object.fromEntries(u.searchParams));
+    if (demandes.journey.length === 1) return route.fulfill({ status: 503, contentType: 'application/json; charset=utf-8', body: JSON.stringify({ state: 'preparation', preparing: true, error: 'Les horaires de ce réseau sont en cours de préparation.' }) });
+    return json(route, trajet(u.searchParams));
+  }
   if (quoi === 'vehicles') { demandes.vehicles++; return json(route, vehicules()); }
   if (quoi === 'vehicle') {
     demandes.vehicle.push(u.searchParams.get('vid'));
@@ -213,6 +256,41 @@ const bulle = await page.evaluate(() => document.getElementById('toast')?.textCo
 ok(/en direct : BANC/.test(bulle), `« Arrêts » annonce le temps réel quand la ville a un réseau (« ${bulle} »)`);
 ok((await etat()).marqueurs.length >= 2 && demandes.for.length === 2, `les véhicules restent, sans redemander le réseau (${demandes.for.length} demandes : une par chargement de page)`);
 
+// --- 6 bis. l'itinéraire, sur le réseau de la ville ------------------------------------------------
+await page.evaluate(([lat, lon]) => { map.closePopup(); map.setView([lat, lon], 14, { animate: false }); }, [VILLE.lat, VILLE.lon]);
+let p = await page.evaluate(() => ({ ici: Boolean(document.querySelector('#reseauPlanner > #planner')), contexte: window.Planner.context()?.name, ouvert: document.getElementById('planner').open }));
+ok(p.ici && p.contexte === 'BANC' && !p.ouvert, `le planificateur est venu dans le panneau de la ville, sur son réseau (« ${p.contexte} »)`);
+await page.locator('#planner > summary').click();
+await page.waitForTimeout(300);
+ok(demandes.plan === 1, `l'ouvrir lance la préparation des horaires du réseau (${demandes.plan} demande)`);
+await page.locator('#jFrom').click();
+await page.locator('#jFrom').pressSequentially('Alp', { delay: 30 });
+await page.waitForFunction(() => /Préparation des arrêts/.test(document.getElementById('jFromSuggest')?.innerText || ''), null, { timeout: 5000 }).catch(() => {});
+ok(/Préparation des arrêts du réseau/.test(await page.locator('#jFromSuggest').innerText()), 'pendant la préparation, la liste le dit au lieu de rester vide');
+await page.waitForFunction(() => /Alpha/.test(document.getElementById('jFromSuggest')?.innerText || ''), null, { timeout: 8000 }).catch(() => {});
+const propose = (await page.locator('#jFromSuggest').innerText()).replace(/\s+/g, ' ');
+ok(/Alpha Arrêt · B, 23/.test(propose) && demandes.suggest.at(-1).city === VILLE.id, `puis les arrêts du réseau arrivent d'eux-mêmes (« ${propose} »)`);
+await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+ok(await page.inputValue('#jFrom') === 'Alpha' && await page.evaluate(() => document.activeElement.id) === 'jTo', 'un arrêt choisi, on passe à l\'arrivée');
+await page.locator('#jTo').pressSequentially('12 rue', { delay: 30 });
+await page.waitForFunction(() => /rue du Banc/.test(document.getElementById('jToSuggest')?.innerText || ''), null, { timeout: 8000 }).catch(() => {});
+await page.keyboard.press('ArrowDown'); await page.keyboard.press('Enter');
+await page.waitForFunction(() => /Préparation des horaires de BANC/.test(document.getElementById('jResults').innerText), null, { timeout: 5000 }).catch(() => {});
+ok(/Préparation des horaires de BANC/.test(await page.locator('#jResults').innerText()), 'horaires pas encore prêts : l\'attente est dite, avec le nom du réseau');
+await page.waitForFunction(() => document.querySelector('#jResults .jhead'), null, { timeout: 10_000 }).catch(() => {});
+const res = (await page.locator('#jResults').innerText()).replace(/\s+/g, ' ');
+ok(/13 min/.test(res) && /3 min à pied/.test(res) && /B\s*Tram · 9 min\s*horaire théorique/.test(res) && /direction France Alouette/.test(res), `puis le trajet s'affiche tout seul (« ${res.slice(0, 110)}… »)`);
+ok(/heures d’après les horaires publiés par BANC, sans temps réel/.test(res) && !/horaires estimés/.test(res), 'il dit que ses heures sont théoriques, au nom du réseau');
+const dj = demandes.journey.at(-1);
+ok(demandes.journey.length === 2 && dj.from_stop === 'A' && dj.to_label === '12 rue du Banc, Réseauville' && Number(dj.to_lat) > 47 && dj.city === VILLE.id && !('from' in dj), `le calcul part des lieux CHOISIS — arrêt et adresse — sur le réseau de la ville (${JSON.stringify(dj).slice(0, 120)})`);
+p = await page.evaluate(() => ({ traces: document.querySelectorAll('path.journey').length, bouts: document.querySelectorAll('.jend').length, enregistrer: Boolean(document.querySelector('#jResults .cpt-apres')) }));
+ok(p.traces >= 4 && p.bouts === 2, `le trajet est dessiné sur la carte, de A à B (${p.traces} tracés, ${p.bouts} bouts)`);
+ok(!p.enregistrer, 'pas de bouton « Enregistrer ce trajet » : les trajets enregistrés sont toulousains');
+// « Y aller en transports » depuis un lieu de la ville : sa destination, le même départ.
+await page.evaluate((l) => window.Reseau.versLieu(l), LIEU);
+await page.waitForFunction(() => /Square du Banc/.test(document.querySelector('#jResults .jod')?.innerText || ''), null, { timeout: 10_000 }).catch(() => {});
+ok(demandes.journey.at(-1).to_label === 'Square du Banc' && demandes.journey.at(-1).from_stop === 'A', 'depuis la fiche d\'un lieu, « Y aller en transports » calcule sur ce réseau');
+
 // --- 7. une ville sans réseau connu ---------------------------------------------------------------
 await page.locator('#cityPickerTitle').click();
 await page.fill('#cityNameSearch', 'Petitbourg');
@@ -229,6 +307,28 @@ const fantomes = await page.evaluate(async ([lat, lon]) => {
 }, [VILLE.lat, VILLE.lon]);
 ok(fantomes === 0, `rien de la ville précédente ne reste, même à son emplacement (${fantomes})`);
 ok(demandes.for.at(-1) === BOURG.id, 'le réseau de la nouvelle ville a bien été demandé');
+p = await page.evaluate(() => ({ chezLui: document.getElementById('planner').parentElement.id, contexte: window.Planner.context(), de: document.getElementById('jFrom').value, a: document.getElementById('jTo').value, traces: document.querySelectorAll('path.journey').length, resultat: document.getElementById('jResults').innerText }));
+ok(p.chezLui === 'transportPanel' && p.contexte === null, `le planificateur a retrouvé sa place (${p.chezLui})`);
+ok(!p.de && !p.a && p.traces === 0 && !p.resultat, 'et le trajet de l\'autre ville est effacé, champs compris');
+
+// --- 8. un réseau qui ne publie que ses horaires ----------------------------------------------------
+await page.goto(`${BASE}/?vue=ville&city=${HORAIRES.id}`, { waitUntil: 'domcontentloaded' });
+await page.waitForFunction(() => !document.getElementById('reseauBox').classList.contains('hidden'), null, { timeout: 20_000 });
+await page.waitForTimeout(2500);
+e = await etat();
+p = await page.evaluate(() => ({ badge: !document.getElementById('reseauBadge').classList.contains('hidden'), contexte: window.Planner.context()?.name, nature: window.Reseau.state().nature }));
+ok(e.label === 'Transports · HORA' && !p.badge, `pas de « en direct » ni de pastille LIVE pour un réseau sans temps réel (« ${e.label} »)`);
+ok(/ne publie pas de temps réel/.test(e.note) && /itinéraires/.test(e.note), `c'est dit, avec ce qui reste possible (« ${e.note.slice(0, 80)}… »)`);
+ok(e.marqueurs.length === 0 && !demandes.horaires.includes('vehicles'), 'aucun véhicule demandé ni montré');
+ok(p.contexte === 'HORA' && p.nature === 'theorique', 'l\'itinéraire, lui, est proposé');
+await page.evaluate(([lat, lon]) => map.setView([lat, lon], 17, { animate: false }), [HORAIRES.lat, HORAIRES.lon]);
+await page.waitForFunction(() => document.querySelectorAll('path.rv-stop').length === 1, null, { timeout: 10_000 }).catch(() => {});
+c = await centreDe('path.rv-stop');
+if (c) await page.mouse.click(c.x, c.y);
+await page.waitForFunction(() => /La Fourragère/.test(document.querySelector('.rv-card')?.innerText || ''), null, { timeout: 10_000 }).catch(() => {});
+e = await etat();
+ok(/Halte/.test(e.fiche || '') && /M1 La Fourragère dans 4 min/.test(e.fiche), `ses arrêts donnent des passages (${(e.fiche || '—').slice(0, 80)}…)`);
+ok(/Horaires théoriques publiés par le réseau, sans temps réel/.test(e.fiche || '') && !/Passages en temps réel/.test(e.fiche || ''), 'présentés comme théoriques, jamais comme du temps réel');
 
 ok(erreurs.length === 0, `aucune erreur de script${erreurs.length ? ' — ' + erreurs.join(' | ') : ''}`);
 console.log(`(${Date.now() - t0} ms)`);

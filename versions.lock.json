@@ -1,17 +1,17 @@
 {
-  "version": "20261002-1.5.0",
+  "version": "20261003-1.6.0",
   "empreintes": {
-    "app.js": "90171b2d0c8a9360",
+    "app.js": "0f54487873305109",
     "art.js": "e98d867c5f8b87b2",
-    "city.css": "3f3cdda062ca5d8c",
-    "city.js": "a5483bdf5cfc9d09",
+    "city.css": "7f8db4c7903d63bc",
+    "city.js": "8d94bdd55850856b",
     "compte.css": "e0b9e744315a9749",
-    "compte.js": "bcb069cf56a17326",
+    "compte.js": "defe22b28badf655",
     "mobile.css": "ac2889b27a0568a2",
     "mobile.js": "3e7dff4591d2243e",
-    "reseau.js": "2283913fd94fbeaf",
+    "reseau.js": "2cca3d0da3743038",
     "styles.css": "21d586d5d3a98251",
-    "sw.js": "5f625b834684675a",
+    "sw.js": "2daf6eaa19cd569e",
     "walking.js": "a7322e6386a71c2f"
   }
 }

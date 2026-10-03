@@ -1032,6 +1032,9 @@ let journey = null;
 // lon, label }. Tant que le texte du champ n'a pas changé, c'est lui qu'on
 // envoie — pas le texte, que le serveur devrait re-deviner.
 const journeyPick = { jFrom: null, jTo: null };
+// Réseau d'une AUTRE ville sur lequel le planificateur calcule (Mode Ville) :
+// { journey, suggest, name } — deux adresses de l'API de ce réseau. Vide : Toulouse.
+let plannerNet = null, journeyTicket = 0;
 
 // Une étape d'itinéraire en frise : à gauche les heures, au milieu un rail (à la
 // couleur de la ligne, ou en pointillés à pied), à droite ce qu'on fait. Le
@@ -1088,7 +1091,9 @@ function renderJourney() {
   }
   const legs = journey.legs || [];
   const warnings = [];
-  if (journey.estimates) warnings.push('horaires estimés : le temps réel ne couvre pas toutes les lignes');
+  if (plannerNet) {
+    if (journey.theoretical) warnings.push(`heures d’après les horaires publiés par ${plannerNet.name}, sans temps réel`);
+  } else if (journey.estimates) warnings.push('horaires estimés : le temps réel ne couvre pas toutes les lignes');
   if ('out_of_service' in journey) {
     // Liste vide = aucune ligne ne circule à cette heure : le trajet affiché
     // est un trajet théorique, pas un trajet possible maintenant.
@@ -1257,14 +1262,60 @@ async function askJourney() {
   if (quand) { const t = Math.floor(new Date(quand).getTime() / 1000); if (Number.isFinite(t)) q.set('at', t); }
   setHtml($('jResults'), '<div class="jerr jwait">Calcul en cours…</div>');
   $('planner').open = true;
+  const mine = ++journeyTicket, net = plannerNet;
   try {
-    const r = await fetch(`/api/journey?${q}`);
-    showJourney(await r.json());
+    // Autre ville : la première demande prépare les horaires du réseau
+    // (quelques secondes) ; on patiente en le disant, puis on redemande.
+    for (let essai = 0; ; essai++) {
+      const r = await fetch(net ? `${net.journey}&${q}` : `/api/journey?${q}`);
+      const j = await r.json();
+      if (mine !== journeyTicket || net !== plannerNet) return;
+      if (j.preparing && essai < 75) {
+        setHtml($('jResults'), `<div class="jerr jwait">Préparation des horaires de ${escapeHtml(net?.name || 'ce réseau')}… quelques secondes la première fois.</div>`);
+        await new Promise((ok) => setTimeout(ok, 2000));
+        if (mine !== journeyTicket || net !== plannerNet) return;
+        continue;
+      }
+      showJourney(j);
+      return;
+    }
   } catch (e) {
+    if (mine !== journeyTicket) return;
     journey = { error: 'Calcul indisponible (' + e.message + ')' };
     renderJourney();
   }
 }
+
+// Le planificateur change de réseau : `net` = { journey, suggest, name } pour
+// une autre ville (il s'installe alors dans `container`, dans le panneau de la
+// ville), rien pour Toulouse (il retrouve sa place).
+const plannerHome = document.createComment('planificateur');
+$('planner').before(plannerHome);
+window.Planner = {
+  use(net, container) {
+    const p = $('planner');
+    const change = (plannerNet?.journey || null) !== (net?.journey || null);
+    // Même réseau : on garde le même objet, une demande en cours reste valable.
+    if (change) plannerNet = net || null;
+    if (net && container) { if (p.parentNode !== container) container.append(p); }
+    else if (plannerHome.nextSibling !== p) plannerHome.after(p);
+    if (!change) return;
+    // Un trajet calculé sur un réseau n'a pas de sens sur un autre.
+    journeyTicket++;
+    for (const id of ['jFrom', 'jTo']) { $(id).value = ''; journeyPick[id] = null; }
+    journey = null; journeyLayer.clearLayers(); renderJourney();
+    if (net) p.open = false;
+  },
+  context: () => plannerNet,
+  // Destination posée depuis une fiche de lieu ; départ : la position si connue.
+  go(to, from = null) {
+    $('jTo').value = to.label;
+    journeyPick.jTo = { text: to.label, lat: to.lat, lon: to.lon, label: to.label };
+    if (from) { $('jFrom').value = 'Ma position'; journeyPick.jFrom = { text: 'Ma position', lat: from.lat, lon: from.lon, label: 'Ma position' }; }
+    $('planner').open = true;
+    if ($('jFrom').value.trim()) askJourney(); else $('jFrom').focus();
+  },
+};
 
 // --- suggestions pendant la saisie ------------------------------------------
 // Arrêts du réseau, adresses et lieux toulousains : on choisit dans la liste au
@@ -1295,6 +1346,7 @@ function attachSuggest(input) {
   };
   const ici = () => (navigator.geolocation ? [{ icon: 'position', title: 'Ma position', sub: 'là où je suis', geo: true }] : []);
   const choose = (it) => {
+    if (it.info) return;
     close();
     if (it.geo) {
       input.value = 'Localisation…';
@@ -1318,11 +1370,13 @@ function attachSuggest(input) {
     timer = setTimeout(async () => {
       const mine = ++token;
       try {
-        const r = await fetch('/api/places/suggest?q=' + encodeURIComponent(q));
+        const r = await fetch((plannerNet ? plannerNet.suggest + '&q=' : '/api/places/suggest?q=') + encodeURIComponent(q));
         if (!r.ok) throw new Error(String(r.status));
         const j = await r.json();
         if (mine !== token || input.value.trim() !== q) return; // réponse périmée
-        items = [
+        // Autre ville : les horaires du réseau se préparent à la première demande.
+        if (j.state === 'preparation') { clearTimeout(timer); timer = setTimeout(search, 1500); }
+        items = j.state === 'preparation' ? [{ icon: 'clock', title: 'Préparation des arrêts du réseau…', sub: 'quelques secondes la première fois', info: true }] : [
           ...(j.stops || []).map((s) => ({ icon: 'stop', title: s.name, sub: s.lines?.length ? `Arrêt · ${s.lines.join(', ')}` : 'Arrêt', stop: s.id })),
           ...(j.places || []).map((p) => ({ icon: p.type === 'poi' ? 'pin' : 'building', title: p.label, sub: p.type === 'poi' ? 'Lieu' : p.kind === 'housenumber' ? 'Adresse' : 'Rue', lat: p.lat, lon: p.lon })),
         ];
@@ -1860,7 +1914,7 @@ function connectStream() {
 
 // PWA : mise en cache du shell applicatif
 if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-  navigator.serviceWorker.register('sw.js?v=20261002-1.5.0', { updateViaCache: 'none' }).catch(() => {});
+  navigator.serviceWorker.register('sw.js?v=20261003-1.6.0', { updateViaCache: 'none' }).catch(() => {});
 }
 
 // deep link ?ligne=L1 (nom court ou route_id)

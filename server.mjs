@@ -35,6 +35,7 @@ import { createTools, INSTRUCTIONS } from './lib/tools.mjs';
 import { indexRealtime } from './lib/realtime.mjs';
 import { parseDisruptions, NO_DISRUPTION } from './lib/perturbations.mjs';
 import { decorateJourney } from './lib/journey-geometry.mjs';
+import { createJourneyOpts } from './lib/journey-opts.mjs';
 import { createCityService, cityCatalog } from './lib/city.mjs';
 import { createCityDirectory, profileCatalog } from './lib/cities.mjs';
 import { createStore } from './lib/store.mjs';
@@ -328,8 +329,23 @@ const cities = createCityDirectory();
 const cityProfile = (req) => cities.get(String(req.query.city || 'fr:31555'));
 // Transports en direct des AUTRES villes (catalogue national) : /api/net/…
 // data-net/ se régénère seul ; TISSEO_DATA_NET le déplace (tests).
-const reseaux = createNetworkService({ dir: join(__dirname, process.env.TISSEO_DATA_NET || 'data-net'), script: join(__dirname, 'scripts', 'prepare-reseau.mjs') });
+const reseaux = createNetworkService({
+  dir: join(__dirname, process.env.TISSEO_DATA_NET || 'data-net'), script: join(__dirname, 'scripts', 'prepare-reseau.mjs'),
+  // Itinéraires : marches par les rues, et adresses de la ville choisie.
+  walk: (a, b) => cityContext.walk(a, b),
+  geocode: (q, o) => geocode(q, o),
+});
 mountNetworks(app, { networks: reseaux, ah });
+
+// Lieux d'une ville. Les vélos en libre-service viennent du système à
+// stations de la ville quand il en existe un (disponibilités en direct, GBFS) ;
+// sinon des stations référencées dans OpenStreetMap, sans disponibilités.
+async function lieuxDe(profile, category) {
+  if (category === 'bikes') {
+    try { const v = await reseaux.bikes.places(profile); if (v) return v; } catch { /* repli OpenStreetMap */ }
+  }
+  return cities.places(profile, category);
+}
 
 app.get('/api/cities/search', ah(async (req, res) => {
   try { res.json({ cities: await cities.search(String(req.query.q || '')) }); }
@@ -340,7 +356,17 @@ app.get('/api/cities/detect', ah(async (req, res) => {
   catch (e) { res.status(e instanceof RangeError ? 400 : 502).json({ error: e instanceof RangeError ? e.message : 'Ville non identifiée. Choisis-la par son nom.' }); }
 }));
 app.get('/api/city/catalog', ah(async (req, res) => {
-  try { res.json(profileCatalog(await cityProfile(req))); }
+  try {
+    const profile = await cityProfile(req);
+    const c = profileCatalog(profile);
+    // Vélos en libre-service : quand un système à stations dessert la ville, la
+    // catégorie devient vivante (disponibilités en direct) et cite sa source.
+    if (profile.transport !== 'tisseo') {
+      const v = await Promise.race([reseaux.bikes.places(profile).catch(() => null), new Promise((r) => setTimeout(() => r(null), 2500))]);
+      if (v) c.categories = c.categories.map((x) => (x.id === 'bikes' ? { ...x, live: true, source: v.source } : x));
+    }
+    res.json(c);
+  }
   catch (e) { res.status(e instanceof RangeError ? 400 : 502).json({ error: 'Ville inconnue ou momentanément indisponible' }); }
 }));
 app.get('/api/city/places', ah(async (req, res) => {
@@ -350,7 +376,7 @@ app.get('/api/city/places', ah(async (req, res) => {
   if (!profileCatalog(profile).categories.some((c) => c.id === category)) {
     return res.status(400).json({ error: 'Catégorie Ville inconnue' });
   }
-  const data = profile.transport === 'tisseo' ? await cityService.places(category) : await cities.places(profile, category);
+  const data = profile.transport === 'tisseo' ? await cityService.places(category) : await lieuxDe(profile, category);
   res.json({ ...data, city_id: profile.id });
 }));
 app.get('/api/city/weather', ah(async (req, res) => {
@@ -891,7 +917,7 @@ app.get('/api/places/suggest', ah(async (req, res) => {
   // « de », « la »… et hors numéro) commence un mot du libellé. Le géocodeur,
   // lui, rend volontiers « U.F.R. Chirurgie Dentaire » pour « 25 rue de me ».
   const VIDES = new Set(['de', 'du', 'des', 'la', 'le', 'les', 'l', 'd', 'a', 'au', 'aux', 'et', 'en']);
-  const mots = normNom(q).split(' ').filter((m) => m && !VIDES.has(m) && !/^d+$/.test(m));
+  const mots = normNom(q).split(' ').filter((m) => m && !VIDES.has(m) && !/^[0-9]+$/.test(m));
   const ABREGES = { bd: 'boulevard', bld: 'boulevard', av: 'avenue', ave: 'avenue', pl: 'place', ch: 'chemin', rte: 'route', all: 'allee', imp: 'impasse', st: 'saint', ste: 'sainte' };
   const repondA = (label) => { const w = normNom(label).split(' '); return mots.every((m) => w.some((x) => x.startsWith(m) || (ABREGES[m] && x.startsWith(ABREGES[m])))); };
   // Trois lettres au moins, et pas un simple nom d'arrêt déjà trouvé à l'identique.
@@ -929,59 +955,10 @@ app.get('/api/status', ah(async (req, res) => {
 }));
 
 // --- Connecteur MCP (ChatGPT, Claude…) ---------------------------------
-// Prochain départ THÉORIQUE d'une ligne à un arrêt, dans le sens qui va de
-// board à alight : c'est ce qui donne un temps d'attente aux étapes que le
-// temps réel ne couvre pas (métro, creux du flux).
-function nextDeparture(routeId, board, alight, t) {
-  if (!schedules) return null;
-  const v = (variants[routeId] ?? []).find((x) => {
-    const i = x.stops.indexOf(board);
-    return i >= 0 && x.stops.indexOf(alight) > i;
-  });
-  const pick = (list) => list.find((x) => x.route_id === routeId && (!v || x.dir === v.dir));
-  // D'abord les 2 h qui viennent ; sinon la nuit entière : à 00 h 30, le
-  // prochain bus est souvent à 05 h 15, et « aucun horaire » ferait
-  // inventer un départ immédiat.
-  const d = pick(scheduleDepartures(schedules, board, t, 400))
-    ?? pick(scheduleDepartures(schedules, board, t, 20_000, 14 * 3600));
-  return d ? d.time : null;
-}
-
-// Ligne en service à l'heure t ? Horaires théoriques, et — pour un départ
-// proche de maintenant — la présence de véhicules dans le flux temps réel.
-// null = on ne sait pas (la ligne n'est alors pas écartée).
-function inService(routeId, t) {
-  const nowish = Math.abs(t - Date.now() / 1000) < 30 * 60;
-  if (nowish && computed?.rt?.perRoute?.[routeId]) return true;
-  return routeActiveAt(schedules, routeId, t);
-}
-// Heure d'ARRIVÉE théorique d'une course partie de board à depT : on
-// retrouve le départ dans la grille, puis son arrivée par appariement.
-function scheduledArrival(routeId, board, alight, depT, estS) {
-  if (!schedules || !(estS > 0)) return null;
-  const v = (variants[routeId] ?? []).find((x) => {
-    const i = x.stops.indexOf(board);
-    return i >= 0 && x.stops.indexOf(alight) > i;
-  });
-  const pick = (id) => (schedules.byStop.get(id) ?? []).filter((e) => e.route_id === routeId && (!v || e.dir === v.dir));
-  const eB = pick(board), eA = pick(alight);
-  if (!eB.length || !eA.length) return null;
-  const day0 = new Date(depT * 1000);
-  for (const offset of [0, -1]) {
-    const day = new Date(day0.getFullYear(), day0.getMonth(), day0.getDate() + offset);
-    const mid = Math.floor(day.getTime() / 1000);
-    const secs = depT - mid;
-    for (const pi of schedules.patternsByDate.get(ymd(day)) ?? []) {
-      const B = [...new Set(eB.flatMap((e) => e.perPat[pi] ?? []))].sort((a, b) => a - b);
-      if (!B.includes(secs)) continue;
-      const A = [...new Set(eA.flatMap((e) => e.perPat[pi] ?? []))].sort((a, b) => a - b);
-      const hit = pairTimes(B, A, estS).find(([b]) => b === secs);
-      if (hit) return mid + hit[1];
-    }
-  }
-  return null;
-}
-const journeyOpts = { nextDeparture, inService, scheduledArrival };
+// Prochain départ théorique, ligne en service, heure d'arrivée d'une course :
+// lib/journey-opts.mjs (partagé avec les réseaux des autres villes).
+const journeyOpts = createJourneyOpts({ variants, schedules: () => schedules, liveRoutes: () => computed?.rt?.perRoute ?? null });
+const { inService } = journeyOpts;
 
 // Géocodage d'adresses et de lieux (IGN Géoplateforme, sans clé), biaisé
 // vers Toulouse. Cache mémoire : un même lieu revient souvent.
@@ -1000,9 +977,12 @@ const geoCache = new Map();
 // Toulouse, la même saisie rend l'adresse toulousaine. On pose donc les deux
 // questions — partout, puis à Toulouse — et l'on fusionne.
 // partial : saisie en cours (suggestions) : le dernier mot peut être un début.
-async function geocodeOne(q, index, { toulouse = false, partial = false } = {}) {
-  const params = { q: q.slice(0, 200), index, limit: '6', lat: '43.6045', lon: '1.4442' };
-  if (toulouse) params.citycode = TOULOUSE_INSEE;
+// centre : la ville autour de laquelle on cherche ({ insee, lat, lon }) — Toulouse
+// par défaut, ou celle du mode Ville pour les itinéraires des autres réseaux.
+const CENTRE_TOULOUSE = { insee: TOULOUSE_INSEE, lat: 43.6045, lon: 1.4442 };
+async function geocodeOne(q, index, { toulouse = false, partial = false, centre = CENTRE_TOULOUSE } = {}) {
+  const params = { q: q.slice(0, 200), index, limit: '6', lat: String(centre.lat), lon: String(centre.lon) };
+  if (toulouse) params.citycode = centre.insee;
   if (partial) params.autocomplete = '1';
   const res = await fetch(`${GEOCODE_URL}?${new URLSearchParams(params)}`, { signal: AbortSignal.timeout(6000), headers: { 'User-Agent': 'TisseoLive/1.0 (plagnito.com)' } });
   if (!res.ok) throw new Error(`géocodeur HTTP ${res.status}`);
@@ -1026,15 +1006,21 @@ async function geocodeOne(q, index, { toulouse = false, partial = false } = {}) 
   });
 }
 
-async function geocode(q, { partial = false } = {}) {
+// city : identifiant d'une ville du mode Ville (« fr:33063 ») ; sans lui, Toulouse.
+async function geocode(q, { partial = false, city = null } = {}) {
   const key = String(q).trim().toLowerCase();
   if (!key) return [];
-  const cle = (partial ? 'p|' : '') + key;
+  let centre = CENTRE_TOULOUSE;
+  if (city && city !== 'fr:' + TOULOUSE_INSEE) {
+    const p = await cities.get(city);
+    centre = { insee: city.slice(3), lat: p.lat, lon: p.lon };
+  }
+  const cle = (partial ? 'p|' : '') + (centre === CENTRE_TOULOUSE ? '' : centre.insee + '|') + key;
   const hit = geoCache.get(cle);
   if (hit && Date.now() - hit.at < 24 * 3600_000) return hit.list;
   const reponses = await Promise.allSettled([
-    geocodeOne(key, 'address', { partial }), geocodeOne(key, 'poi', { partial }),
-    geocodeOne(key, 'address', { toulouse: true, partial }), geocodeOne(key, 'poi', { toulouse: true, partial }),
+    geocodeOne(key, 'address', { partial, centre }), geocodeOne(key, 'poi', { partial, centre }),
+    geocodeOne(key, 'address', { toulouse: true, partial, centre }), geocodeOne(key, 'poi', { toulouse: true, partial, centre }),
   ]);
   if (reponses.every((r) => r.status === 'rejected')) throw new Error('géocodeur injoignable');
   // Un même lieu remonte par les deux questions : on garde sa meilleure note.
@@ -1146,7 +1132,7 @@ const mcp = createMcpServer({
   instructionsCompte: INSTRUCTIONS_COMPTE,
   tools: [
     ...outilsTransport,
-    ...createCityTools({ cities, cityService, cityContext, profileCatalog, resoudreLieu: outilsTransport.resoudreLieu, reseaux }),
+    ...createCityTools({ cities: { ...cities, places: lieuxDe }, cityService, cityContext, profileCatalog, resoudreLieu: outilsTransport.resoudreLieu, reseaux }),
     ...createAccountTools({ accounts, compte, publicUrl: PUBLIC_URL }),
   ],
 });

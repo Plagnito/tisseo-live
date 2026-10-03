@@ -438,7 +438,7 @@
     }
     $('cityDetailClose').onclick = () => { selectedPlace = null; $('cityDetail').classList.add('hidden'); rebuildMarkers(); render(); };
     $('cityJourney').onclick = () => {
-      if(profile.transport!=='tisseo'){window.open(`https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}&travelmode=transit`,'_blank','noopener,noreferrer');return;}
+      if(profile.transport!=='tisseo'){if(window.Reseau?.versLieu?.(p,myLocation)){toast(`Destination : ${p.name}.${myLocation?'':' Choisis ton départ.'}`);return;}window.open(`https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lon}&travelmode=transit`,'_blank','noopener,noreferrer');return;}
       $('jTo').value = `${p.lat},${p.lon}`;
       const from = myLocation || state.nearby;
       if (from) $('jFrom').value = `${from.lat},${from.lon}`;

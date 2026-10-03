@@ -65,6 +65,9 @@
 .reseau-box select { font-size: 11px; }
 .reseau-etat { margin: 0; font-size: 10.5px; line-height: 1.35; color: var(--muted); }
 .reseau-etat a { color: inherit; }
+/* Le planificateur, venu calculer sur le réseau de cette ville. */
+.reseau-planner:empty { display: none; }
+.reseau-planner .planner { margin: 4px 0 0; }
 .rv-marker { transition: transform 1.2s linear; }
 .leaflet-zoom-anim .rv-marker { transition: none; }
 .rv {
@@ -182,3 +185,8 @@
 .city-walk-dialog{width:min(520px,calc(100% - 28px));max-height:85vh;border:1px solid #deded3;border-radius:24px;background:#fffdf8;color:#253c3b;padding:24px;box-shadow:0 20px 80px #253c3b33;overflow:auto}.city-walk-dialog::backdrop{background:#253c3b66;backdrop-filter:blur(3px)}.city-walk-heading{display:flex;justify-content:space-between;align-items:center}.city-walk-heading h2{margin:0;font-size:24px}.city-walk-dialog p{font-size:14px;line-height:1.6;color:#64706c}.city-walk-dialog button{min-height:44px;padding:10px 14px;border:1px solid #deded3;border-radius:12px;background:#f0eee6;color:#253c3b;cursor:pointer}.city-walk-hero{display:grid;gap:8px;border-radius:18px;background:#edf2e9;padding:24px;margin-top:18px}.city-walk-hero>b{font-size:40px}.city-walk-hero button{background:#253c3b;color:white}.city-walk-totals{display:flex;justify-content:space-between;gap:12px;padding:16px 0}.city-walk-totals>div{display:grid;gap:6px}.city-walk-totals b{font-size:18px}.city-game-level{padding:18px;border:1px solid #deded3;border-radius:16px;background:#f8f6f1}.city-game-level>b{font-size:22px;color:#a84f35}.city-game-level progress{display:block;width:100%;margin:12px 0;accent-color:#a84f35}.city-walk-day{display:grid;grid-template-columns:65px 1fr 80px;gap:10px;align-items:center;margin:12px 0;font-size:13px}.city-walk-day meter{width:100%;accent-color:#253c3b}.city-game-toggle{display:flex;gap:12px;align-items:center;padding:20px 0;font-size:16px}.city-game-toggle input{width:22px;height:22px;accent-color:#a84f35}
 
 .city-view .brand h1{max-width:min(38vw,480px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.city-coverage{font-size:12px!important;line-height:1.5}
+/* Sur le fond clair du mode Ville, les teintes d'alerte du planificateur
+   (pensées pour le fond sombre) deviennent lisibles. */
+.city-view .jwarn, .city-view .jleg .jtime em { color: #8a5a00; }
+.city-view .jerr { color: #a8322d; }
+.city-view .jerr.jwait { color: var(--muted); }
