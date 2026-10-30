@@ -428,7 +428,7 @@ node scripts/verifier-mcp.mjs https://tisseo.plagnito.com/mcp
 
 ## Déploiement (Raspberry Pi)
 
-Dépôt `Plagnito/tisseo-live` (privé), publié depuis ce dossier du monodépôt `D:\Claude` :
+Dépôt `Plagnito/tisseo-live` (public), publié depuis ce dossier du monodépôt `D:\Claude` :
 
 ```powershell
 git subtree push --prefix=SideApps/Tisseo tisseo main   # remote tisseo = git@github.com:Plagnito/tisseo-live.git
