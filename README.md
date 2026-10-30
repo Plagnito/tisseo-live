@@ -588,3 +588,12 @@ Les lieux OSM sont limités à 6 km du centre choisi. Les exports publics Huwise
 La promenade stocke les distances quotidiennes localement. Les points et badges sont désactivés par défaut et activables dans Réglages, avec 10 points par 100 mètres enregistrés. La version web interrompt le suivi lorsqu’elle est masquée ; le suivi écran éteint utilise le service de localisation de l’[application Android native](android/README.md). Les points GPS ne sont pas envoyés au serveur. Chaque appareil conserve ses propres statistiques et réglages.
 
 Fonctions réalisées et idées de coopération : [FEATURES.md](FEATURES.md).
+
+## Licence
+
+Le code de Tisséo Live est sous licence **MIT** (voir [`LICENSE`](LICENSE)).
+
+Les données ne relèvent pas de cette licence. Les horaires et arrêts de `data/` sont dérivés
+du GTFS de Tisséo / Toulouse Métropole, sous **ODbL** : toute réutilisation doit citer la
+source et rester sous ODbL. Les autres sources (réseaux de transport.data.gouv.fr, OSM,
+Huwise, Cyclocity) gardent leur propre licence, indiquée plus haut et dans l'application.
