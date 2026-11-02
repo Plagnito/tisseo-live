@@ -5,6 +5,8 @@ import assert from 'node:assert/strict';
 import { createStore } from '../lib/store.mjs';
 import { createOAuth, ErreurOAuth } from '../lib/oauth.mjs';
 import { pkce } from '../lib/atlas.mjs';
+import express from 'express';
+import { monterCompte } from '../lib/compte-routes.mjs';
 
 const REDIRECT = 'https://chatgpt.com/connector_platform_oauth_redirect';
 const META = { client_name: 'Assistant de test', redirect_uris: [REDIRECT] };
@@ -87,4 +89,44 @@ test('F-44A3E8 : un ancien client déjà autorisé garde son identifiant après 
   horloge.t += 11 * MINUTE;
   inscrire();
   assert.ok(oauth.client(autorise), 'la rotation de clients inutilisés ne révoque pas un ancien client autorisé');
+});
+
+
+test('F-44A3E8 : POST /oauth/register HTTP récupère après saturation, sans casser les erreurs OAuth', async () => {
+  const { oauth, horloge } = banc();
+  const app = express();
+  monterCompte(app, {
+    accounts: {}, atlas: {}, atlasSessions: {}, oauth,
+    calculer: async () => ({}), log: () => {},
+    debits: { inscription: [1000, 3600_000] }, // isoler le plafond global du limiteur IP
+  });
+  const serveur = await new Promise((resolve) => {
+    const s = app.listen(0, '127.0.0.1', () => resolve(s));
+  });
+  try {
+    const url = `http://127.0.0.1:${serveur.address().port}/oauth/register`;
+    const inscrireHttp = async (body = META) => {
+      const reponse = await fetch(url, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      });
+      return { status: reponse.status, cache: reponse.headers.get('cache-control'), body: await reponse.json() };
+    };
+    const premier = await inscrireHttp();
+    assert.equal(premier.status, 201);
+    for (let i = 1; i < 300; i++) assert.equal((await inscrireHttp()).status, 201);
+    const plein = await inscrireHttp();
+    assert.equal(plein.status, 503);
+    assert.equal(plein.body.error, 'temporarily_unavailable');
+    horloge.t += 11 * MINUTE;
+    const retour = await inscrireHttp();
+    assert.equal(retour.status, 201);
+    assert.equal(retour.cache, 'no-store');
+    assert.notEqual(retour.body.client_id, premier.body.client_id);
+    assert.equal(oauth.client(premier.body.client_id), null);
+    const refuse = await inscrireHttp({ redirect_uris: ['https://invalid.example/cb'] });
+    assert.equal(refuse.status, 400);
+    assert.equal(refuse.body.error, 'invalid_redirect_uri');
+  } finally {
+    await new Promise((resolve) => serveur.close(resolve));
+  }
 });
