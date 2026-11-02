@@ -15,6 +15,8 @@ jobs:
   oauth-regressions:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    env:
+      TZ: Europe/Paris # la suite GTFS existante attend les heures locales de Paris
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
