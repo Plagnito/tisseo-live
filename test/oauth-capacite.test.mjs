@@ -130,3 +130,46 @@ test('F-44A3E8 : POST /oauth/register HTTP récupère après saturation, sans ca
     await new Promise((resolve) => serveur.close(resolve));
   }
 });
+
+
+test('F-44A3E8 : un code PKCE en cours survit à la rotation des inscriptions', () => {
+  const { oauth, horloge, inscrire } = banc();
+  const clientId = inscrire();
+  const autres = remplir(inscrire, 299);
+  horloge.t += 10 * MINUTE;
+  const { verifier, challenge } = pkce();
+  const demande = oauth.ouvrirDemande({ client_id: clientId, redirect_uri: REDIRECT, response_type: 'code', code_challenge: challenge, code_challenge_method: 'S256' });
+  const code = new URL(oauth.conclure(demande, '42', { accord: true })).searchParams.get('code');
+  horloge.t += MINUTE;
+  inscrire();
+  assert.ok(oauth.client(clientId));
+  assert.equal(oauth.client(autres[0]), null);
+  const jetons = oauth.echanger({ grant_type: 'authorization_code', client_id: clientId, code, redirect_uri: REDIRECT, code_verifier: verifier });
+  assert.equal(oauth.verifier(jetons.access_token)?.uid, '42');
+});
+
+test('F-44A3E8 : si tous les clients sont autorisés, aucun ne peut être évincé', () => {
+  const { oauth, horloge, inscrire } = banc();
+  const ids = [];
+  for (let i = 0; i < 300; i++) {
+    const id = inscrire();
+    autoriser(oauth, id);
+    ids.push(id);
+  }
+  horloge.t += 11 * MINUTE;
+  assert.throws(inscrire, (e) => e instanceof ErreurOAuth && e.error === 'temporarily_unavailable' && e.statut === 503);
+  assert.ok(ids.every((id) => oauth.client(id)), 'aucun client déjà autorisé supprimé');
+});
+
+test('F-44A3E8 : les clients historiques sans marqueur explicite restent protégés', () => {
+  const { oauth, horloge, store, inscrire } = banc();
+  const ancien = inscrire();
+  horloge.t += 1;
+  autoriser(oauth, ancien);
+  store.collection('oauth').changer((d) => { delete d.clients[ancien].utilise; });
+  horloge.t += 91 * JOUR;
+  remplir(inscrire, 299);
+  horloge.t += 11 * MINUTE;
+  inscrire();
+  assert.ok(oauth.client(ancien), 'migration sans rupture des anciens client_id');
+});
