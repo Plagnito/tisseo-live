@@ -16,6 +16,8 @@ permissions:
 jobs:
   mcp-security:
     runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Paris # Les fixtures GTFS existantes attendent l'heure locale.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
