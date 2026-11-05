@@ -1,0 +1,32 @@
+name: Security regression MCP
+
+on:
+  pull_request:
+    paths:
+      - 'lib/mcp.mjs'
+      - 'test/mcp-batch-security.test.mjs'
+      - '.github/workflows/security-mcp.yml'
+      - 'package.json'
+      - 'package-lock.json'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  mcp-security:
+    runs-on: ubuntu-latest
+    env:
+      TZ: Europe/Paris # Les fixtures GTFS existantes attendent l'heure locale.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Test F-771029 (transport HTTP MCP)
+        run: node --test test/mcp-batch-security.test.mjs
+      - name: Suite de tests existante
+        run: npm test
